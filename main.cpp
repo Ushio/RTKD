@@ -221,87 +221,103 @@ int main() {
 
             for (rtkd::KDTask task : tasks_inputs)
             {
+                int best_axis = -1;
                 int best_i_split = -1;
                 float best_cost = (task.end - task.beg) * rtkd::COST_INTERSECT;
 
                 enum { NBins = 32 };
-                int min_bins[NBins] = {};
-                int max_bins[NBins] = {};
-
-                rtkd::AABB min_AABB[NBins];
-                rtkd::AABB max_AABB[NBins];
-                for (int i = 0; i < NBins; i++)
+                for (int axis = 0; axis < 3; axis++)
                 {
-                    min_AABB[i].set_empty();
-                    max_AABB[i].set_empty();
-                }
+                    int min_bins[NBins] = {};
+                    int max_bins[NBins] = {};
 
-                int axis = 0;
-                for (int i = task.beg; i != task.end; i++)
-                {
-                    rtkd::AABB box = elementAABBs[i];
-                    int index_min = rtkd::bucket(box.lower[axis], task.aabb.lower[axis], task.aabb.upper[axis], NBins);
-                    int index_max = rtkd::bucket(box.upper[axis], task.aabb.lower[axis], task.aabb.upper[axis], NBins);
-                    min_bins[index_min]++;
-                    max_bins[index_max]++;
-                    min_AABB[index_min].extend(box);
-                    max_AABB[index_max].extend(box);
-                }
-
-                // inclusive prefix sum
-                rtkd::AABB mi; mi.set_empty();
-                rtkd::AABB ma; ma.set_empty();
-                int mi_count = 0;
-                int ma_count = 0;
-                for (int i = 0; i < NBins; i++)
-                {
-                    mi.extend(min_AABB[i]);
-                    min_AABB[i] = mi;
-
-                    ma.extend(max_AABB[NBins - i - 1]);
-                    max_AABB[NBins - i - 1] = ma;
-
-                    mi_count += min_bins[i];
-                    min_bins[i] = mi_count;
-
-                    ma_count += max_bins[NBins - i - 1];
-                    max_bins[NBins - i - 1] = ma_count;
-                }
-
-                float p_area = task.aabb.surface_area();
-                for (int i_split = 1; i_split < NBins; i_split++)
-                {
-                    rtkd::AABB L = min_AABB[i_split - 1];
-                    rtkd::AABB R = max_AABB[i_split];
-                    int nL = min_bins[i_split - 1];
-                    int nR = max_bins[i_split];
-
-                    float cost = rtkd::COST_TRAVERSE +
-                        (L.surface_area() / p_area) * nL * rtkd::COST_INTERSECT +
-                        (R.surface_area() / p_area) * nR * rtkd::COST_INTERSECT;
-
-                    if (cost < best_cost)
+                    rtkd::AABB min_AABB[NBins];
+                    rtkd::AABB max_AABB[NBins];
+                    for (int i = 0; i < NBins; i++)
                     {
-                        best_cost = cost;
-                        best_i_split = i_split;
+                        min_AABB[i].set_empty();
+                        max_AABB[i].set_empty();
                     }
+
+                    for (int i = task.beg; i != task.end; i++)
+                    {
+                        rtkd::AABB box = elementAABBs[i];
+                        int index_min = rtkd::bucket(box.lower[axis], task.aabb.lower[axis], task.aabb.upper[axis], NBins);
+                        int index_max = rtkd::bucket(box.upper[axis], task.aabb.lower[axis], task.aabb.upper[axis], NBins);
+                        min_bins[index_min]++;
+                        max_bins[index_max]++;
+                        min_AABB[index_min].extend(box);
+                        max_AABB[index_max].extend(box);
+                    }
+
+                    // inclusive prefix sum
+                    rtkd::AABB mi; mi.set_empty();
+                    rtkd::AABB ma; ma.set_empty();
+                    int mi_count = 0;
+                    int ma_count = 0;
+                    for (int i = 0; i < NBins; i++)
+                    {
+                        mi.extend(min_AABB[i]);
+                        min_AABB[i] = mi;
+
+                        ma.extend(max_AABB[NBins - i - 1]);
+                        max_AABB[NBins - i - 1] = ma;
+
+                        mi_count += min_bins[i];
+                        min_bins[i] = mi_count;
+
+                        ma_count += max_bins[NBins - i - 1];
+                        max_bins[NBins - i - 1] = ma_count;
+                    }
+
+                    float p_area = task.aabb.surface_area();
+                    for (int i_split = 1; i_split < NBins; i_split++)
+                    {
+                        rtkd::AABB L = min_AABB[i_split - 1];
+                        rtkd::AABB R = max_AABB[i_split];
+                        int nL = min_bins[i_split - 1];
+                        int nR = max_bins[i_split];
+
+                        float cost = rtkd::COST_TRAVERSE +
+                            (L.surface_area() / p_area) * nL * rtkd::COST_INTERSECT +
+                            (R.surface_area() / p_area) * nR * rtkd::COST_INTERSECT;
+
+                        if (cost < best_cost)
+                        {
+                            best_cost = cost;
+                            best_i_split = i_split;
+                            best_axis = axis;
+                        }
+                    }
+
+                    //if (axis == 2)
+                    //{
+                    //    glm::vec3 axis_vector = {};
+                    //    axis_vector[best_axis] = 1.0f;
+                    //    glm::vec3 t0, t1;
+                    //    GetOrthonormalBasis(axis_vector, &t0, &t1);
+
+                    //    int i_split = best_i_split;
+                    //     //int i_split = debug_index + 1;
+                    //    float b = rtkd::border(i_split, task.aabb.lower[axis], task.aabb.upper[axis], NBins);
+                    //    DrawFreeGrid(axis_vector * b, t0, t1, 2, { 200, 200, 200 });
+
+                    //    DrawAABB(toGLM(min_AABB[i_split - 1].lower), toGLM(min_AABB[i_split - 1].upper), { 255, 0, 0 });
+                    //    DrawAABB(toGLM(max_AABB[i_split].lower), toGLM(max_AABB[i_split].upper), { 0, 255, 0 });
+                    //    printf("%d-%d\n", min_bins[i_split - 1], max_bins[i_split]);
+                    //}
                 }
 
-                int i_split = best_i_split;
-                 //int i_split = debug_index + 1;
-                float b = rtkd::border(i_split, task.aabb.lower[axis], task.aabb.upper[axis], NBins);
-                DrawFreeGrid({ b, 0, 0 }, { 0, 0.5f, 0 }, { 0, 0, 0.5f }, 2, { 128 ,128 ,128 });
+                //if (0 <= best_axis)
+                //{
+                //    glm::vec3 axis_vector = {};
+                //    axis_vector[best_axis] = 1.0f;
+                //    glm::vec3 t0, t1;
+                //    GetOrthonormalBasis(axis_vector, &t0, &t1);
 
-                DrawAABB(toGLM(min_AABB[i_split - 1].lower), toGLM(min_AABB[i_split - 1].upper), { 255, 0, 0 });
-                DrawAABB(toGLM(max_AABB[i_split].lower), toGLM(max_AABB[i_split].upper), { 0, 255, 0 });
-                printf("%d-%d\n", min_bins[i_split - 1], max_bins[i_split]);
-
-                //DrawAABB(toGLM(min_AABB[debug_index].lower), toGLM(min_AABB[debug_index].upper), { 255, 0, 0 });
-
-                //float b0 = rtkd::border(debug_index, task.aabb.lower[axis], task.aabb.upper[axis], NBins);
-                //float b1 = rtkd::border(debug_index + 1, task.aabb.lower[axis], task.aabb.upper[axis], NBins);
-                //DrawFreeGrid({ b0, 0, 0 }, { 0, 0.5f, 0 }, { 0, 0, 0.5f }, 2, { 128 ,128 ,128 });
-                //DrawFreeGrid({ b1, 0, 0 }, { 0, 0.5f, 0 }, { 0, 0, 0.5f }, 2, { 128 ,128 ,128 });
+                //    float b = rtkd::border(best_i_split, task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
+                //    DrawFreeGrid(axis_vector * b, t0, t1, 2, { 200, 200, 200 });
+                //}
             }
         });
 
