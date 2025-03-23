@@ -216,6 +216,8 @@ int main() {
             {
                 int best_axis = -1;
                 int best_i_split = -1;
+                int best_nL = 0;
+                int best_nR = 0;
                 float best_cost = (task.end - task.beg) * rtkd::COST_INTERSECT;
 
                 enum { NBins = 32 };
@@ -280,6 +282,8 @@ int main() {
                             best_cost = cost;
                             best_i_split = i_split;
                             best_axis = axis;
+                            best_nL = nL;
+                            best_nR = nR;
                         }
                     }
 
@@ -301,6 +305,27 @@ int main() {
                     //}
                 }
 
+                int i_L = 0;
+                int i_R = 0;
+                for (int i = task.beg; i != task.end; i++)
+                {
+                    rtkd::AABB box = elementAABBs_inputs[i];
+                    int index_min = rtkd::bucket(box.lower[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
+                    int index_max = rtkd::bucket(box.upper[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
+
+                    if (index_min < best_i_split)
+                    {
+                        i_L++;
+                    }
+                    if (best_i_split <= index_max)
+                    {
+                        i_R++;
+                    }
+                }
+                printf("%d-%d\n", best_nL, i_L);
+                printf("%d-%d\n", best_nR, i_R);
+
+                //printf("");
                 //if (0 <= best_axis)
                 //{
                 //    glm::vec3 axis_vector = {};
