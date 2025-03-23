@@ -220,6 +220,19 @@ int main() {
                 int best_nR = 0;
                 float best_cost = (task.end - task.beg) * rtkd::COST_INTERSECT;
 
+                /*
+                i_split
+                0  1  2
+                +--+--+---
+                |  |  |   ..
+                +--+--+---
+                
+                bin
+                +--+--+---
+                |0 |1 |2  ..
+                +--+--+---
+                */
+
                 enum { NBins = 32 };
                 for (int axis = 0; axis < 3; axis++)
                 {
