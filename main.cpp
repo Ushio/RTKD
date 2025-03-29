@@ -76,6 +76,11 @@ namespace rtkd
                 upper[i] = ss_max(upper[i], b.upper[i]);
             }
         }
+        void extend(const AABB& b, int axis)
+        {
+            lower[axis] = ss_min(lower[axis], b.lower[axis]);
+            upper[axis] = ss_max(upper[axis], b.upper[axis]);
+        }
         float surface_area() const
         {
             Vec3 size = upper - lower;
@@ -104,7 +109,7 @@ namespace rtkd
     }
 
     static const float COST_TRAVERSE = 1.0f;
-    static const float COST_INTERSECT = 4.0f;
+    static const float COST_INTERSECT = 8.0f;
 }
 
 inline glm::vec3 toGLM(rtkd::Vec3 x)
@@ -129,7 +134,7 @@ int main() {
 
     SetDataDir(ExecutableDir());
     std::string err;
-    std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("test.obj"), err);
+    std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("4_tris.obj"), err);
 
     while (pr::NextFrame() == false) {
         if (IsImGuiUsingMouse() == false) {
@@ -191,8 +196,8 @@ int main() {
             pr::PrimEnd();
 
             // Build KD Tree
-            std::vector<rtkd::AABB> elementAABBs_inputs(triangles.size() * 5);
-            std::vector<rtkd::AABB> elementAABBs_outputs(triangles.size() * 5);
+            std::vector<rtkd::AABB> elementAABBs_inputs(triangles.size() * 20);
+            std::vector<rtkd::AABB> elementAABBs_outputs(triangles.size() * 20);
 
             rtkd::AABB box;
             box.set_empty();
@@ -216,10 +221,19 @@ int main() {
                 }
             );
 
+            int counter = 0;
+
             for (int i_task = 0; i_task < 32; i_task++)
             {
                 for (rtkd::KDTask task : tasks_inputs)
                 {
+                    if (task.n <= 1)
+                    {
+                        // terminate
+                        counter += task.n;
+                        continue;
+                    }
+
                     int budget = task.end - task.beg;
                     int best_axis = -1;
                     int best_i_split = -1;
@@ -227,6 +241,8 @@ int main() {
                     int best_nR = 0;
                     rtkd::AABB best_aabbL;
                     rtkd::AABB best_aabbR;
+                    float best_maxL = 0.0f;
+                    float best_minR = 0.0f;
                     float best_cost = task.n * rtkd::COST_INTERSECT;
 
                     /*
@@ -248,13 +264,8 @@ int main() {
                         int min_bins[NBins] = {};
                         int max_bins[NBins] = {};
 
-                        rtkd::AABB min_AABB[NBins];
-                        rtkd::AABB max_AABB[NBins];
-                        for (int i = 0; i < NBins; i++)
-                        {
-                            min_AABB[i].set_empty();
-                            max_AABB[i].set_empty();
-                        }
+                        float max_L = -FLT_MAX;
+                        float min_R = +FLT_MAX;
 
                         for (int i = task.beg; i != task.beg + task.n; i++)
                         {
@@ -263,23 +274,15 @@ int main() {
                             int index_max = rtkd::bucket(box.upper[axis], task.aabb.lower[axis], task.aabb.upper[axis], NBins);
                             min_bins[index_min]++;
                             max_bins[index_max]++;
-                            min_AABB[index_min].extend(box);
-                            max_AABB[index_max].extend(box);
+                            max_L = rtkd::ss_max(max_L, box.upper[axis]);
+                            min_R = rtkd::ss_min(min_R, box.lower[axis]);
                         }
 
                         // inclusive prefix sum
-                        rtkd::AABB mi; mi.set_empty();
-                        rtkd::AABB ma; ma.set_empty();
                         int mi_count = 0;
                         int ma_count = 0;
                         for (int i = 0; i < NBins; i++)
                         {
-                            mi.extend(min_AABB[i]);
-                            min_AABB[i] = mi;
-
-                            ma.extend(max_AABB[NBins - i - 1]);
-                            max_AABB[NBins - i - 1] = ma;
-
                             mi_count += min_bins[i];
                             min_bins[i] = mi_count;
 
@@ -290,15 +293,19 @@ int main() {
                         float p_area = task.aabb.surface_area();
                         for (int i_split = 1; i_split < NBins; i_split++)
                         {
-                            rtkd::AABB L = min_AABB[i_split - 1];
-                            rtkd::AABB R = max_AABB[i_split];
+
+                            float b = rtkd::border(i_split, task.aabb.lower[axis], task.aabb.upper[axis], NBins);
+                            rtkd::AABB L = task.aabb;
+                            rtkd::AABB R = task.aabb;
+                            L.upper[axis] = b;
+                            R.lower[axis] = b;
+
                             int nL = min_bins[i_split - 1];
                             int nR = max_bins[i_split];
 
                             float cost = rtkd::COST_TRAVERSE +
                                 (L.surface_area() / p_area) * nL * rtkd::COST_INTERSECT +
                                 (R.surface_area() / p_area) * nR * rtkd::COST_INTERSECT;
-
                             if (cost < best_cost )
                             {
                                 if (nL + nR <= budget)
@@ -310,6 +317,8 @@ int main() {
                                     best_nR = nR;
                                     best_aabbL = L;
                                     best_aabbR = R;
+                                    best_maxL = max_L;
+                                    best_minR = min_R;
                                 }
                                 else
                                 {
@@ -321,6 +330,19 @@ int main() {
 
                     if (0 < best_i_split)
                     {
+                        // update boundary 
+                        float boundary = rtkd::border(best_i_split, task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
+                        if( best_nL == 0)
+                        {
+                            boundary = best_minR;
+                        }
+                        if (best_nR == 0)
+                        {
+                            boundary = best_maxL;
+                        }
+                        best_aabbL.upper[best_axis] = boundary;
+                        best_aabbR.lower[best_axis] = boundary;
+
                         int budget_L = best_nL * budget / ( best_nL + best_nR );
 
                         rtkd::KDTask task_L;
@@ -336,7 +358,16 @@ int main() {
                         task_R.n = best_nR;
                         task_R.aabb = best_aabbR;
 
-                        if (task_L.end - task_L.beg - task_L.n == 0)
+                        printf("%d -> %d %d\n", task.n, task_L.n, task_R.n);
+
+                        //if(counter == 0)
+                        //if (task_L.n == 1 || task_R.n == 1)
+                        //{
+                        //    DrawAABB(toGLM(best_aabbL.lower), toGLM(best_aabbL.upper), { 0, 0, 255 });
+                        //    DrawAABB(toGLM(best_aabbR.lower) * 1.01f, toGLM(best_aabbR.upper) * 1.01f, { 0, 255, 255 });
+                        //    counter++;
+                        //}
+                        if (task_L.n == 0 && task_R.n == 0)
                         {
                             printf("");
                         }
@@ -361,7 +392,8 @@ int main() {
                             }
                         }
 
-                        tasks_outputs.push_back(task_L);
+                        // 
+                        //tasks_outputs.push_back(task_L);
                         tasks_outputs.push_back(task_R);
 
                         PR_ASSERT(best_nL == i_L);
@@ -374,12 +406,32 @@ int main() {
                             glm::vec3 t0, t1;
                             GetOrthonormalBasis(axis_vector, &t0, &t1);
 
-                            float b = rtkd::border(best_i_split, task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
-                            DrawFreeGrid(axis_vector * b, t0, t1, 2, { 200, 200, 200 });
+                            //float b = rtkd::border(best_i_split, task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
+                            //DrawFreeGrid(axis_vector * b, t0, t1, 2, { 200, 200, 200 });
+                            //if (best_nL == 0 || best_nR == 0)
+                            {
+                                DrawAABB(toGLM(best_aabbL.lower), toGLM(best_aabbL.upper), { 255, 0, 0 });
 
-                            DrawAABB(toGLM(best_aabbL.lower), toGLM(best_aabbL.upper), { 255, 0, 0 });
-                            DrawAABB(toGLM(best_aabbR.lower), toGLM(best_aabbR.upper), { 0, 255, 0 });
+                                //for (int j = 0; j < task_L.n; j++)
+                                //{
+                                //    auto b = elementAABBs_outputs[task_L.beg + j];
+                                //    DrawAABB(toGLM(b.lower), toGLM(b.upper), { 255, 255,255 });
+                                //}
+                                DrawAABB(toGLM(best_aabbR.lower), toGLM(best_aabbR.upper), { 0, 255, 0 });
+
+                                //for (int j = 0; j < task_R.n; j++)
+                                //{
+                                //    auto b = elementAABBs_outputs[task_R.beg + j];
+                                //    DrawAABB(toGLM(b.lower), toGLM(b.upper), { 255, 255,255 });
+                                //}
+
+                                DrawAABB(toGLM(task.aabb.lower) * 1.01f, toGLM(task.aabb.upper) * 1.01f, { 255, 255, 255 });
+                            }
                         }
+                    }
+                    else
+                    {
+                        counter += task.n;
                     }
                 }
 
@@ -392,6 +444,8 @@ int main() {
                 std::swap(tasks_inputs, tasks_outputs);
                 std::swap(elementAABBs_inputs, elementAABBs_outputs);
             }
+
+            printf("");
         });
 
         PopGraphicState();
