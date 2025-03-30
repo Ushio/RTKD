@@ -15,6 +15,11 @@ namespace rtkd
     {
         return (y < x) ? y : x;
     }
+    template <class T>
+    inline T ss_clamp(T x, T lower, T upper)
+    {
+        return ss_min(ss_max(x, lower), upper);
+    }
 
     struct Vec3
     {
@@ -150,7 +155,7 @@ namespace rtkd
         {
             Vec3 ro = vs[i];
             Vec3 rd = vs[(i + 1) % 3] - ro;
-            float one_over_rd = glm::clamp(1.0f / rd[axis], -FLT_MAX, FLT_MAX);
+            float one_over_rd = ss_clamp(1.0f / rd[axis], -FLT_MAX, FLT_MAX);
             float t = (boundary - ro[axis]) * one_over_rd;
             if (0.0f <= (ro[axis] - boundary) * dir)
             {
