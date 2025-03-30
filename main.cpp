@@ -2,6 +2,12 @@
 #include <iostream>
 #include <memory>
 
+template <class T>
+inline glm::vec3 toGLM(T x)
+{
+    return { x[0], x[1], x[2] };
+}
+
 namespace rtkd
 {
     template <class T>
@@ -100,6 +106,11 @@ namespace rtkd
             Vec3 size = upper - lower;
             return (size[0] * size[1] + size[1] * size[2] + size[2] * size[0]) * 2.0f;
         }
+        float volume() const
+        {
+            Vec3 size = upper - lower;
+            return size[0] * size[1] * size[2];
+        }
         bool isIntersect(const AABB& rhs) const
         {
             for (int i = 0; i < 3; i++)
@@ -113,6 +124,12 @@ namespace rtkd
         }
         AABB intersect(const AABB& rhs) const
         {
+            if (isIntersect(rhs) == false)
+            {
+                AABB e;
+                e.set_empty();
+                return e;
+            }
             AABB I;
             for (int i = 0; i < 3; i++)
             {
@@ -146,10 +163,11 @@ namespace rtkd
     {
         return lower + (upper - lower) / nBins * i;
     }
-    inline AABB clip(const AABB& baseAABB, Vec3 a, Vec3 b, Vec3 c, float boundary, int axis, float dir)
+
+    inline void divide_clip(AABB* L, AABB *R, const AABB& baseAABB, Vec3 a, Vec3 b, Vec3 c, float boundary, int axis, int nEps )
     {
-        AABB divided;
-        divided.set_empty();
+        L->set_empty();
+        R->set_empty();
         Vec3 vs[] = { a, b, c };
         for (int i = 0; i < 3; i++)
         {
@@ -157,30 +175,53 @@ namespace rtkd
             Vec3 rd = vs[(i + 1) % 3] - ro;
             float one_over_rd = ss_clamp(1.0f / rd[axis], -FLT_MAX, FLT_MAX);
             float t = (boundary - ro[axis]) * one_over_rd;
-            if (0.0f <= (ro[axis] - boundary) * dir)
+            if( ro[axis] - boundary < 0.0f )
             {
-                divided.extend(ro);
+                L->extend(ro);
+            }
+            else
+            {
+                R->extend(ro);
             }
 
-            if (0.0f < t && t < 1.0f)
+            // move p for conservative clipping
+            if (-FLT_EPSILON * nEps < t && t < 1.0f + FLT_EPSILON * nEps)
             {
                 Vec3 p = ro + rd * t;
-                divided.extend(p);
+                float bias = ss_max(fabsf(p[axis] * FLT_EPSILON), FLT_MIN) * nEps;
+                Vec3 pL = p;
+                Vec3 pR = p;
+                pL[axis] += bias;
+                pR[axis] -= bias;
+
+                L->extend(pL);
+                R->extend(pR);
             }
         }
-        return baseAABB.intersect(divided);
+
+        *L = baseAABB.intersect(*L);
+        *R = baseAABB.intersect(*R);
     }
+
     static const float COST_TRAVERSE = 1.0f;
     static const float COST_INTERSECT = 8.0f;
+
+    struct KDNode
+    {
+
+    };
 }
 
-inline glm::vec3 toGLM(rtkd::Vec3 x)
+
+void test()
 {
-    return { x[0], x[1], x[2] };
+
 }
 
 int main() {
     using namespace pr;
+
+    test();
 
     Config config;
     config.ScreenWidth = 1920;
@@ -427,16 +468,19 @@ int main() {
                             int index_max = rtkd::bucket(elem.aabb.upper[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
 
                             rtkd::Triangle triangle = triangles[elem.triangleIndex];
+                            rtkd::AABB clippedL, clippedR;
+                            divide_clip(&clippedL, &clippedR, elem.aabb, triangle.vs[0], triangle.vs[1], triangle.vs[2], boundary, best_axis, 64);
+
                             if (index_min < best_i_split)
                             {
                                 rtkd::KDElement clipped = elem;
-                                clipped.aabb = rtkd::clip(clipped.aabb, triangle.vs[0], triangle.vs[1], triangle.vs[2], boundary, best_axis, -1.0f);
+                                clipped.aabb = clippedL;
                                 elementAABBs_outputs[task_L.beg + i_L++] = clipped;
                             }
                             if (best_i_split <= index_max)
                             {
                                 rtkd::KDElement clipped = elem;
-                                clipped.aabb = rtkd::clip(clipped.aabb, triangle.vs[0], triangle.vs[1], triangle.vs[2], boundary, best_axis, +1.0f);
+                                clipped.aabb = clippedR;
                                 elementAABBs_outputs[task_R.beg + i_R++] = clipped;
                             }
                         }
@@ -448,10 +492,10 @@ int main() {
 
                         if (0 <= best_axis && debug_index == i_task)
                         {
-                            glm::vec3 axis_vector = {};
-                            axis_vector[best_axis] = 1.0f;
-                            glm::vec3 t0, t1;
-                            GetOrthonormalBasis(axis_vector, &t0, &t1);
+                            //glm::vec3 axis_vector = {};
+                            //axis_vector[best_axis] = 1.0f;
+                            //glm::vec3 t0, t1;
+                            //GetOrthonormalBasis(axis_vector, &t0, &t1);
 
                             //float b = rtkd::border(best_i_split, task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
                             //DrawFreeGrid(axis_vector * b, t0, t1, 2, { 200, 200, 200 });
@@ -461,6 +505,18 @@ int main() {
                                 DrawAABB(toGLM(best_aabbR.lower), toGLM(best_aabbR.upper), { 0, 255, 0 });
                                 DrawAABB(toGLM(task.aabb.lower) * 1.01f, toGLM(task.aabb.upper) * 1.01f, { 255, 255, 255 });
                             }
+
+                            //for (int j = task_L.beg; j < task_L.end; j++)
+                            //{
+                            //    printf("vl %f\n", elementAABBs_outputs[j].aabb.volume());
+                            //    DrawAABB(toGLM(elementAABBs_outputs[j].aabb.lower), toGLM(elementAABBs_outputs[j].aabb.upper), { 128, 0, 0 });
+                            //}
+                            //for (int j = task_R.beg; j < task_R.end; j++)
+                            //{
+                            //    printf("vr %f\n", elementAABBs_outputs[j].aabb.volume());
+
+                            //    DrawAABB(toGLM(elementAABBs_outputs[j].aabb.lower), toGLM(elementAABBs_outputs[j].aabb.upper), { 0, 128, 0 });
+                            //}
                         }
                     }
                 }
