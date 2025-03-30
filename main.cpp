@@ -105,6 +105,11 @@ namespace rtkd
         int end;
         AABB aabb;
     };
+    struct KDElement
+    {
+        int triangleIndex;
+        AABB aabb;
+    };
 
     inline int bucket( float x, float lower, float upper, int nBins )
     {
@@ -206,19 +211,22 @@ int main() {
             pr::PrimEnd();
 
             // Build KD Tree
-            std::vector<rtkd::AABB> elementAABBs_inputs(triangles.size() * 8);
-            std::vector<rtkd::AABB> elementAABBs_outputs(triangles.size() * 8);
+            std::vector<rtkd::KDElement> elementAABBs_inputs(triangles.size() * 8);
+            std::vector<rtkd::KDElement> elementAABBs_outputs(triangles.size() * 8);
 
             rtkd::AABB box;
             box.set_empty();
             for (int i = 0; i < triangles.size(); i++)
             {
-                elementAABBs_inputs[i].set_empty();
+                rtkd::AABB triangleAABB;
+                triangleAABB.set_empty();
                 for (int j = 0; j < 3; j++)
                 {
-                    elementAABBs_inputs[i].extend(triangles[i].vs[j]);
+                    triangleAABB.extend(triangles[i].vs[j]);
                     box.extend(triangles[i].vs[j]);
                 }
+                elementAABBs_inputs[i].triangleIndex = i;
+                elementAABBs_inputs[i].aabb = triangleAABB;
             }
 
             std::vector<rtkd::KDTask> tasks_inputs;
@@ -278,7 +286,7 @@ int main() {
 
                         for (int i = task.beg; i != task.end; i++)
                         {
-                            rtkd::AABB box = elementAABBs_inputs[i];
+                            rtkd::AABB box = elementAABBs_inputs[i].aabb;
                             int index_min = rtkd::bucket(box.lower[axis], task.aabb.lower[axis], task.aabb.upper[axis], NBins);
                             int index_max = rtkd::bucket(box.upper[axis], task.aabb.lower[axis], task.aabb.upper[axis], NBins);
                             min_bins[index_min]++;
@@ -367,17 +375,17 @@ int main() {
                         int i_R = 0;
                         for (int i = task.beg; i != task.end; i++)
                         {
-                            rtkd::AABB elementBox = elementAABBs_inputs[i];
+                            rtkd::AABB elementBox = elementAABBs_inputs[i].aabb;
                             int index_min = rtkd::bucket(elementBox.lower[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
                             int index_max = rtkd::bucket(elementBox.upper[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
 
                             if (index_min < best_i_split)
                             {
-                                elementAABBs_outputs[task_L.beg + i_L++] = elementBox;
+                                elementAABBs_outputs[task_L.beg + i_L++] = elementAABBs_inputs[i];
                             }
                             if (best_i_split <= index_max)
                             {
-                                elementAABBs_outputs[task_R.beg + i_R++] = elementBox;
+                                elementAABBs_outputs[task_R.beg + i_R++] = elementAABBs_inputs[i];
                             }
                         }
 
