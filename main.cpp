@@ -41,6 +41,15 @@ namespace rtkd
         }
         return r;
     }
+    inline Vec3 operator*(Vec3 a, float s)
+    {
+        Vec3 r;
+        for (int i = 0; i < 3; i++)
+        {
+            r[i] = a[i] * s;
+        }
+        return r;
+    }
 
     struct Triangle
     {
@@ -86,7 +95,7 @@ namespace rtkd
             Vec3 size = upper - lower;
             return (size[0] * size[1] + size[1] * size[2] + size[2] * size[0]) * 2.0f;
         }
-        bool intersect(const AABB& rhs) const
+        bool isIntersect(const AABB& rhs) const
         {
             for (int i = 0; i < 3; i++)
             {
@@ -96,6 +105,16 @@ namespace rtkd
                 }
             }
             return true;
+        }
+        AABB intersect(const AABB& rhs) const
+        {
+            AABB I;
+            for (int i = 0; i < 3; i++)
+            {
+                I.lower[i] = ss_max(lower[i], rhs.lower[i]);
+                I.upper[i] = ss_min(upper[i], rhs.upper[i]);
+            }
+            return I;
         }
     };
 
@@ -122,7 +141,30 @@ namespace rtkd
     {
         return lower + (upper - lower) / nBins * i;
     }
+    inline AABB clip(const AABB& baseAABB, Vec3 a, Vec3 b, Vec3 c, float boundary, int axis, float dir)
+    {
+        AABB divided;
+        divided.set_empty();
+        Vec3 vs[] = { a, b, c };
+        for (int i = 0; i < 3; i++)
+        {
+            Vec3 ro = vs[i];
+            Vec3 rd = vs[(i + 1) % 3] - ro;
+            float one_over_rd = glm::clamp(1.0f / rd[axis], -FLT_MAX, FLT_MAX);
+            float t = (boundary - ro[axis]) * one_over_rd;
+            if (0.0f <= (ro[axis] - boundary) * dir)
+            {
+                divided.extend(ro);
+            }
 
+            if (0.0f < t && t < 1.0f)
+            {
+                Vec3 p = ro + rd * t;
+                divided.extend(p);
+            }
+        }
+        return baseAABB.intersect(divided);
+    }
     static const float COST_TRAVERSE = 1.0f;
     static const float COST_INTERSECT = 8.0f;
 }
@@ -375,17 +417,22 @@ int main() {
                         int i_R = 0;
                         for (int i = task.beg; i != task.end; i++)
                         {
-                            rtkd::AABB elementBox = elementAABBs_inputs[i].aabb;
-                            int index_min = rtkd::bucket(elementBox.lower[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
-                            int index_max = rtkd::bucket(elementBox.upper[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
+                            rtkd::KDElement elem = elementAABBs_inputs[i];
+                            int index_min = rtkd::bucket(elem.aabb.lower[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
+                            int index_max = rtkd::bucket(elem.aabb.upper[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
 
+                            rtkd::Triangle triangle = triangles[elem.triangleIndex];
                             if (index_min < best_i_split)
                             {
-                                elementAABBs_outputs[task_L.beg + i_L++] = elementAABBs_inputs[i];
+                                rtkd::KDElement clipped = elem;
+                                clipped.aabb = rtkd::clip(clipped.aabb, triangle.vs[0], triangle.vs[1], triangle.vs[2], boundary, best_axis, -1.0f);
+                                elementAABBs_outputs[task_L.beg + i_L++] = clipped;
                             }
                             if (best_i_split <= index_max)
                             {
-                                elementAABBs_outputs[task_R.beg + i_R++] = elementAABBs_inputs[i];
+                                rtkd::KDElement clipped = elem;
+                                clipped.aabb = rtkd::clip(clipped.aabb, triangle.vs[0], triangle.vs[1], triangle.vs[2], boundary, best_axis, +1.0f);
+                                elementAABBs_outputs[task_R.beg + i_R++] = clipped;
                             }
                         }
 
