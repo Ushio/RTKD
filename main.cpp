@@ -334,11 +334,6 @@ int main() {
                 for (rtkd::KDTask task : tasks_inputs)
                 {
                     int nElement = task.end - task.beg;
-                    if (nElement <= 1)
-                    {
-                        // terminate
-                        continue;
-                    }
 
                     int best_axis = -1;
                     int best_i_split = -1;
