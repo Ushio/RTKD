@@ -237,7 +237,7 @@ int main() {
 
     SetDataDir(ExecutableDir());
     std::string err;
-    std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("4_tris.obj"), err);
+    std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("test.obj"), err);
 
     while (pr::NextFrame() == false) {
         if (IsImGuiUsingMouse() == false) {
@@ -253,6 +253,7 @@ int main() {
         DrawGrid(GridAxis::XZ, 1.0f, 10, { 128, 128, 128 });
         DrawXYZAxis(1.0f);
 
+        // hmm still some bad aabb..
         static int debug_index = 0;
 
         scene->visitPolyMesh([](std::shared_ptr<const FPolyMeshEntity> polymesh) {
@@ -334,6 +335,10 @@ int main() {
                 for (rtkd::KDTask task : tasks_inputs)
                 {
                     int nElement = task.end - task.beg;
+                    if (nElement == 0)
+                    {
+                        continue;
+                    }
 
                     int best_axis = -1;
                     int best_i_split = -1;
