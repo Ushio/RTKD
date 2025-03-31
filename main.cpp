@@ -266,7 +266,7 @@ int main() {
         DrawXYZAxis(1.0f);
 
         // hmm still some bad aabb..
-        static int debug_index = 12;
+        static int debug_index = 8;
 
         scene->visitPolyMesh([](std::shared_ptr<const FPolyMeshEntity> polymesh) {
             if (polymesh->visible() == false)
@@ -347,10 +347,6 @@ int main() {
                 for (rtkd::KDTask task : tasks_inputs)
                 {
                     int nElement = task.end - task.beg;
-                    if (nElement == 0)
-                    {
-                        continue;
-                    }
 
                     int best_axis = -1;
                     int best_i_split = -1;
@@ -464,7 +460,6 @@ int main() {
                         task_L.beg = output_counter;
                         //task_L.end = output_counter + best_nL;
                         task_L.aabb = best_aabbL;
-
                         task_R.beg = output_counter + best_nL;
                         //task_R.end = output_counter + best_nL + best_nR;
                         task_R.aabb = best_aabbR;
@@ -508,8 +503,14 @@ int main() {
                         task_L.end = task_L.beg + i_L;
                         task_R.end = task_R.beg + i_R;
 
-                        tasks_outputs.push_back(task_L);
-                        tasks_outputs.push_back(task_R);
+                        if (i_L)
+                        {
+                            tasks_outputs.push_back(task_L);
+                        }
+                        if (i_R)
+                        {
+                            tasks_outputs.push_back(task_R);
+                        }
                         //PR_ASSERT(best_nL == i_L);
                         //PR_ASSERT(best_nR == i_R);
 
@@ -524,9 +525,18 @@ int main() {
                             //DrawFreeGrid(axis_vector * b, t0, t1, 2, { 200, 200, 200 });
                             //if (best_nL == 0 || best_nR == 0)
                             {
-                                DrawAABB(toGLM(best_aabbL.lower), toGLM(best_aabbL.upper), { 255, 0, 0 });
-                                DrawAABB(toGLM(best_aabbR.lower), toGLM(best_aabbR.upper), { 0, 255, 0 });
-                                DrawAABB(toGLM(task.aabb.lower) * 1.01f, toGLM(task.aabb.upper) * 1.01f, { 255, 255, 255 });
+                                //  && best_aabbL.volume() < 0.0000001f
+                                if (i_L)
+                                {
+                                    DrawAABB(toGLM(best_aabbL.lower), toGLM(best_aabbL.upper), { 255, 0, 0 });
+                                }
+
+                                // && best_aabbR.volume() < 0.0000001f
+                                if (i_R)
+                                {
+                                    DrawAABB(toGLM(best_aabbR.lower), toGLM(best_aabbR.upper), { 0, 255, 0 });
+                                }
+                                //DrawAABB(toGLM(task.aabb.lower) * 1.001f, toGLM(task.aabb.upper) * 1.001f, { 255, 255, 255 });
                             }
 
                             //for (int j = task_L.beg; j < task_L.end; j++)
