@@ -72,7 +72,7 @@ namespace rtkd
         Vec3 lower;
         Vec3 upper;
 
-        void set_empty()
+        void setEmpty()
         {
             for (int i = 0; i < 3; i++)
             {
@@ -127,7 +127,7 @@ namespace rtkd
             if (isIntersect(rhs) == false)
             {
                 AABB e;
-                e.set_empty();
+                e.setEmpty();
                 return e;
             }
             AABB I;
@@ -137,6 +137,17 @@ namespace rtkd
                 I.upper[i] = ss_min(upper[i], rhs.upper[i]);
             }
             return I;
+        }
+        bool isEmpty()
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                if (upper[i] < lower[i])
+                {
+                    return true;
+                }
+            }
+            return false;
         }
     };
 
@@ -166,8 +177,8 @@ namespace rtkd
 
     inline void divide_clip(AABB* L, AABB *R, const AABB& baseAABB, Vec3 a, Vec3 b, Vec3 c, float boundary, int axis, int nEps )
     {
-        L->set_empty();
-        R->set_empty();
+        L->setEmpty();
+        R->setEmpty();
         Vec3 vs[] = { a, b, c };
         for (int i = 0; i < 3; i++)
         {
@@ -185,6 +196,7 @@ namespace rtkd
             }
 
             // move p for conservative clipping
+            //if (-FLT_EPSILON * nEps < t && t < 1.0f + FLT_EPSILON * nEps)
             if (-FLT_EPSILON * nEps < t && t < 1.0f + FLT_EPSILON * nEps)
             {
                 Vec3 p = ro + rd * t;
@@ -254,7 +266,7 @@ int main() {
         DrawXYZAxis(1.0f);
 
         // hmm still some bad aabb..
-        static int debug_index = 0;
+        static int debug_index = 12;
 
         scene->visitPolyMesh([](std::shared_ptr<const FPolyMeshEntity> polymesh) {
             if (polymesh->visible() == false)
@@ -304,11 +316,11 @@ int main() {
             std::vector<rtkd::KDElement> elementAABBs_outputs(triangles.size() * 8);
 
             rtkd::AABB box;
-            box.set_empty();
+            box.setEmpty();
             for (int i = 0; i < triangles.size(); i++)
             {
                 rtkd::AABB triangleAABB;
-                triangleAABB.set_empty();
+                triangleAABB.setEmpty();
                 for (int j = 0; j < 3; j++)
                 {
                     triangleAABB.extend(triangles[i].vs[j]);
@@ -450,11 +462,11 @@ int main() {
                         rtkd::KDTask task_R;
 
                         task_L.beg = output_counter;
-                        task_L.end = output_counter + best_nL;
+                        //task_L.end = output_counter + best_nL;
                         task_L.aabb = best_aabbL;
 
                         task_R.beg = output_counter + best_nL;
-                        task_R.end = output_counter + best_nL + best_nR;
+                        //task_R.end = output_counter + best_nL + best_nR;
                         task_R.aabb = best_aabbR;
 
                         printf("%d -> %d %d\n", nElement, best_nL, best_nR);
@@ -473,22 +485,33 @@ int main() {
 
                             if (index_min < best_i_split)
                             {
-                                rtkd::KDElement clipped = elem;
-                                clipped.aabb = clippedL;
-                                elementAABBs_outputs[task_L.beg + i_L++] = clipped;
+                                if (clippedL.isEmpty() == false)
+                                {
+                                    PR_ASSERT(0.0f < clippedL.volume());
+                                    rtkd::KDElement clipped = elem;
+                                    clipped.aabb = clippedL;
+                                    elementAABBs_outputs[task_L.beg + i_L++] = clipped;
+                                }
                             }
                             if (best_i_split <= index_max)
                             {
-                                rtkd::KDElement clipped = elem;
-                                clipped.aabb = clippedR;
-                                elementAABBs_outputs[task_R.beg + i_R++] = clipped;
+                                if (clippedR.isEmpty() == false)
+                                {
+                                    PR_ASSERT(0.0f < clippedR.volume());
+                                    rtkd::KDElement clipped = elem;
+                                    clipped.aabb = clippedR;
+                                    elementAABBs_outputs[task_R.beg + i_R++] = clipped;
+                                }
                             }
                         }
 
+                        task_L.end = task_L.beg + i_L;
+                        task_R.end = task_R.beg + i_R;
+
                         tasks_outputs.push_back(task_L);
                         tasks_outputs.push_back(task_R);
-                        PR_ASSERT(best_nL == i_L);
-                        PR_ASSERT(best_nR == i_R);
+                        //PR_ASSERT(best_nL == i_L);
+                        //PR_ASSERT(best_nR == i_R);
 
                         if (0 <= best_axis && debug_index == i_task)
                         {
