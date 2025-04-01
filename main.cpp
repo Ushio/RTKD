@@ -199,7 +199,7 @@ namespace rtkd
             //if (-FLT_EPSILON * nEps < t && t < 1.0f + FLT_EPSILON * nEps)
             if (-FLT_EPSILON * nEps < t && t < 1.0f + FLT_EPSILON * nEps)
             {
-                Vec3 p = ro + rd * t;
+                Vec3 p = ro + rd * ss_clamp(t, 0.0f, 1.0f); // todo clamp
                 float bias = ss_max(fabsf(p[axis] * FLT_EPSILON), FLT_MIN) * nEps;
                 Vec3 pL = p;
                 Vec3 pR = p;
@@ -266,7 +266,7 @@ int main() {
         DrawXYZAxis(1.0f);
 
         // hmm still some bad aabb..
-        static int debug_index = 8;
+        static int debug_index = -1;
 
         scene->visitPolyMesh([](std::shared_ptr<const FPolyMeshEntity> polymesh) {
             if (polymesh->visible() == false)
@@ -312,8 +312,8 @@ int main() {
             pr::PrimEnd();
 
             // Build KD Tree
-            std::vector<rtkd::KDElement> elementAABBs_inputs(triangles.size() * 8);
-            std::vector<rtkd::KDElement> elementAABBs_outputs(triangles.size() * 8);
+            std::vector<rtkd::KDElement> elementAABBs_inputs(triangles.size() * 18);
+            std::vector<rtkd::KDElement> elementAABBs_outputs(triangles.size() * 18);
 
             rtkd::AABB box;
             box.setEmpty();
@@ -374,6 +374,11 @@ int main() {
                     enum { NBins = 32 };
                     for (int axis = 0; axis < 3; axis++)
                     {
+                        //if (task.aabb.lower[axis] - task.aabb.lower[axis] < 1.0e-4f)
+                        //{
+
+                        //}
+
                         int min_bins[NBins] = {};
                         int max_bins[NBins] = {};
 
@@ -438,14 +443,42 @@ int main() {
                     {
                         // update boundary 
                         float boundary = rtkd::border(best_i_split, task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
-                        if(best_nL == 0)
+                        if (best_nL + best_nR == nElement)
                         {
-                            boundary = best_minR;
+                            float lMax = -FLT_MAX;
+                            float rMin = FLT_MAX;
+                            for (int i = task.beg; i != task.end; i++)
+                            {
+                                rtkd::KDElement elem = elementAABBs_inputs[i];
+                                int index_min = rtkd::bucket(elem.aabb.lower[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
+                                int index_max = rtkd::bucket(elem.aabb.upper[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
+
+                                if (index_min < best_i_split)
+                                {
+                                    lMax = rtkd::ss_max(lMax, elem.aabb.upper[best_axis]);
+                                }
+                                if (best_i_split <= index_max)
+                                {
+                                    rMin = rtkd::ss_min(rMin, elem.aabb.lower[best_axis]);
+                                }
+                            }
+
+                            PR_ASSERT(lMax <= rMin );
+
+                            if( best_nL == 0 )
+                            {
+                                boundary = rMin;
+                            }
+                            else if (best_nR == 0)
+                            {
+                                boundary = lMax;
+                            }
+                            else
+                            {
+                                boundary = rMin;
+                            }
                         }
-                        if (best_nR == 0)
-                        {
-                            boundary = best_maxL;
-                        }
+
                         best_aabbL.upper[best_axis] = boundary;
                         best_aabbR.lower[best_axis] = boundary;
 
@@ -457,14 +490,14 @@ int main() {
                         rtkd::KDTask task_L;
                         rtkd::KDTask task_R;
 
-                        task_L.beg = output_counter;
+                        task_L.beg = alloc_head;
                         //task_L.end = output_counter + best_nL;
                         task_L.aabb = best_aabbL;
-                        task_R.beg = output_counter + best_nL;
+                        task_R.beg = alloc_head + best_nL;
                         //task_R.end = output_counter + best_nL + best_nR;
                         task_R.aabb = best_aabbR;
 
-                        printf("%d -> %d %d\n", nElement, best_nL, best_nR);
+                        //printf("%d -> %d %d\n", nElement, best_nL, best_nR);
 
                         int i_L = 0;
                         int i_R = 0;
@@ -482,7 +515,7 @@ int main() {
                             {
                                 if (clippedL.isEmpty() == false)
                                 {
-                                    PR_ASSERT(0.0f < clippedL.volume());
+                                    PR_ASSERT(0.0f < clippedL.volume()); // TODO
                                     rtkd::KDElement clipped = elem;
                                     clipped.aabb = clippedL;
                                     elementAABBs_outputs[task_L.beg + i_L++] = clipped;
@@ -500,15 +533,22 @@ int main() {
                             }
                         }
 
+                        //printf("L %d->%d\n", best_nL, i_L);
+                        //printf("R %d->%d\n", best_nR, i_R);
+
                         task_L.end = task_L.beg + i_L;
                         task_R.end = task_R.beg + i_R;
 
                         if (i_L)
                         {
+                            PR_ASSERT(task_L.aabb.isEmpty() == false);
+
                             tasks_outputs.push_back(task_L);
                         }
                         if (i_R)
                         {
+                            PR_ASSERT(task_R.aabb.isEmpty() == false);
+
                             tasks_outputs.push_back(task_R);
                         }
                         //PR_ASSERT(best_nL == i_L);
@@ -516,6 +556,8 @@ int main() {
 
                         if (0 <= best_axis && debug_index == i_task)
                         {
+                            // printf("{{%.20f, %.20f, %.20f}, {%.20f, %.20f, %.20f}};\n", task.aabb.lower[0], task.aabb.lower[1], task.aabb.lower[2], task.aabb.upper[0], task.aabb.upper[1], task.aabb.upper[2]);
+
                             //glm::vec3 axis_vector = {};
                             //axis_vector[best_axis] = 1.0f;
                             //glm::vec3 t0, t1;
@@ -528,13 +570,32 @@ int main() {
                                 //  && best_aabbL.volume() < 0.0000001f
                                 if (i_L)
                                 {
-                                    DrawAABB(toGLM(best_aabbL.lower), toGLM(best_aabbL.upper), { 255, 0, 0 });
+                                    //if (best_aabbL.volume() < 0.0)
+                                    {
+                                        //pr::PrimBegin(pr::PrimitiveMode::Lines, 3);
+
+                                        //auto tri = triangles[elementAABBs_outputs[task_L.beg + 0].triangleIndex];
+                                        //{
+                                        //    for (int j = 0; j < 3; ++j)
+                                        //    {
+                                        //        rtkd::Vec3 v0 = tri.vs[j];
+                                        //        rtkd::Vec3 v1 = tri.vs[(j + 1) % 3];
+                                        //        pr::PrimVertex({ v0.xs[0], v0.xs[1], v0.xs[2] }, { 255, 0, 255 });
+                                        //        pr::PrimVertex({ v1.xs[0], v1.xs[1], v1.xs[2] }, { 255, 0, 255 });
+                                        //    }
+                                        //}
+
+                                        //pr::PrimEnd();
+
+                                        DrawAABB(toGLM(best_aabbL.lower), toGLM(best_aabbL.upper), { 255, 0, 0 });
+                                    }
                                 }
 
                                 // && best_aabbR.volume() < 0.0000001f
                                 if (i_R)
                                 {
-                                    DrawAABB(toGLM(best_aabbR.lower), toGLM(best_aabbR.upper), { 0, 255, 0 });
+                                    //if (best_aabbR.volume() < 0.0)
+                                        DrawAABB(toGLM(best_aabbR.lower), toGLM(best_aabbR.upper), { 0, 255, 0 });
                                 }
                                 //DrawAABB(toGLM(task.aabb.lower) * 1.001f, toGLM(task.aabb.upper) * 1.001f, { 255, 255, 255 });
                             }
@@ -565,6 +626,8 @@ int main() {
                 std::swap(tasks_inputs, tasks_outputs);
                 std::swap(elementAABBs_inputs, elementAABBs_outputs);
             }
+
+            fin:
 
             printf("");
         });
