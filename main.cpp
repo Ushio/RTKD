@@ -250,6 +250,8 @@ int main() {
     std::string err;
     std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("test.obj"), err);
     // std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("4_tris_flat.obj"), err);
+    //std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("share.obj"), err);
+    
     while (pr::NextFrame() == false) {
         if (IsImGuiUsingMouse() == false) {
             UpdateCameraBlenderLike(&camera);
@@ -311,8 +313,8 @@ int main() {
             pr::PrimEnd();
 
             // Build KD Tree
-            std::vector<rtkd::KDElement> elementAABBs_inputs(triangles.size() * 18);
-            std::vector<rtkd::KDElement> elementAABBs_outputs(triangles.size() * 18);
+            std::vector<rtkd::KDElement> elementAABBs_inputs(triangles.size() * 8);
+            std::vector<rtkd::KDElement> elementAABBs_outputs(triangles.size() * 8);
 
             rtkd::AABB box;
             box.setEmpty();
@@ -340,7 +342,8 @@ int main() {
                 }
             );
 
-            int maxDepth = 8 + log2(triangles.size());
+            //int maxDepth = 8 + log2(triangles.size());
+            int maxDepth = 32;
 
             for (int i_task = 0; i_task < maxDepth; i_task++)
             {
@@ -425,7 +428,13 @@ int main() {
                             float cost = rtkd::COST_TRAVERSE +
                                 (L.surface_area() / p_area) * nL * rtkd::COST_INTERSECT +
                                 (R.surface_area() / p_area) * nR * rtkd::COST_INTERSECT;
-                            if (cost < best_cost )
+
+                            bool healtySplit =
+                                nL == 0 || nR == 0 ||
+                                (nL < nElement && nR < nElement);
+
+                            if( healtySplit )
+                            if ( cost < best_cost )
                             {
                                 best_cost = cost;
                                 best_i_split = i_split;
@@ -512,6 +521,9 @@ int main() {
                             rtkd::AABB clippedL, clippedR;
                             divide_clip(&clippedL, &clippedR, elem.aabb, triangle.vs[0], triangle.vs[1], triangle.vs[2], boundary, best_axis, 64);
 
+                            clippedL = best_aabbL.intersect(clippedL);
+                            clippedR = best_aabbR.intersect(clippedR);
+
                             if (index_min < best_i_split)
                             {
                                 if (clippedL.isEmpty() == false)
@@ -595,6 +607,22 @@ int main() {
                                 // && best_aabbR.volume() < 0.0000001f
                                 if (i_R)
                                 {
+                                    //pr::PrimBegin(pr::PrimitiveMode::Lines, 3);
+
+                                    //for (int k = 0; k < i_R; k++)
+                                    //{
+                                    //    auto tri = triangles[elementAABBs_outputs[task_L.beg + k].triangleIndex];
+                                    //    for (int j = 0; j < 3; ++j)
+                                    //    {
+                                    //        rtkd::Vec3 v0 = tri.vs[j];
+                                    //        rtkd::Vec3 v1 = tri.vs[(j + 1) % 3];
+                                    //        pr::PrimVertex({ v0.xs[0], v0.xs[1], v0.xs[2] }, { 255, 0, 255 });
+                                    //        pr::PrimVertex({ v1.xs[0], v1.xs[1], v1.xs[2] }, { 255, 0, 255 });
+                                    //    }
+                                    //}
+
+                                    //pr::PrimEnd();
+
                                     //if (best_aabbR.volume() < 0.0)
                                         DrawAABB(toGLM(best_aabbR.lower), toGLM(best_aabbR.upper), { 0, 255, 0 });
                                 }
