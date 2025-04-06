@@ -142,7 +142,7 @@ namespace rtkd
         {
             for (int i = 0; i < 3; i++)
             {
-                if (upper[i] < lower[i])
+                if (upper[i] <= lower[i])
                 {
                     return true;
                 }
@@ -515,7 +515,7 @@ int main() {
                             {
                                 if (clippedL.isEmpty() == false)
                                 {
-                                    PR_ASSERT(0.0f < clippedL.volume()); // TODO
+                                    PR_ASSERT(0.0f < clippedL.volume());
                                     rtkd::KDElement clipped = elem;
                                     clipped.aabb = clippedL;
                                     elementAABBs_outputs[task_L.beg + i_L++] = clipped;
