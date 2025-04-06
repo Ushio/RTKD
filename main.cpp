@@ -88,19 +88,22 @@ namespace rtkd
                 upper[i] = ss_max(upper[i], p[i]);
             }
         }
-        //void extend(const AABB& b)
-        //{
-        //    for (int i = 0; i < 3; i++)
-        //    {
-        //        lower[i] = ss_min(lower[i], b.lower[i]);
-        //        upper[i] = ss_max(upper[i], b.upper[i]);
-        //    }
-        //}
-        //void extend(const AABB& b, int axis)
-        //{
-        //    lower[axis] = ss_min(lower[axis], b.lower[axis]);
-        //    upper[axis] = ss_max(upper[axis], b.upper[axis]);
-        //}
+        void growEps( int nEps )
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                lower[i] -= ss_max(fabsf(lower[i] * FLT_EPSILON), FLT_MIN) * nEps;
+                upper[i] += ss_max(fabsf(upper[i] * FLT_EPSILON), FLT_MIN) * nEps;
+            }
+        }
+        void extend(const AABB& b)
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                lower[i] = ss_min(lower[i], b.lower[i]);
+                upper[i] = ss_max(upper[i], b.upper[i]);
+            }
+        }
         float surface_area() const
         {
             Vec3 size = upper - lower;
@@ -195,21 +198,17 @@ namespace rtkd
                 R->extend(ro);
             }
 
-            // move p for conservative clipping
-            //if (-FLT_EPSILON * nEps < t && t < 1.0f + FLT_EPSILON * nEps)
             if (-FLT_EPSILON * nEps < t && t < 1.0f + FLT_EPSILON * nEps)
             {
-                Vec3 p = ro + rd * ss_clamp(t, 0.0f, 1.0f); // todo clamp
-                float bias = ss_max(fabsf(p[axis] * FLT_EPSILON), FLT_MIN) * nEps;
-                Vec3 pL = p;
-                Vec3 pR = p;
-                pL[axis] += bias;
-                pR[axis] -= bias;
-
-                L->extend(pL);
-                R->extend(pR);
+                Vec3 p = ro + rd * ss_clamp(t, 0.0f, 1.0f);
+                L->extend(p);
+                R->extend(p);
             }
         }
+
+        // conservative bound for axis-aligned element
+        L->growEps(nEps);
+        R->growEps(nEps);
 
         *L = baseAABB.intersect(*L);
         *R = baseAABB.intersect(*R);
@@ -250,7 +249,7 @@ int main() {
     SetDataDir(ExecutableDir());
     std::string err;
     std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("test.obj"), err);
-
+    // std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("4_tris_flat.obj"), err);
     while (pr::NextFrame() == false) {
         if (IsImGuiUsingMouse() == false) {
             UpdateCameraBlenderLike(&camera);
@@ -324,8 +323,10 @@ int main() {
                 for (int j = 0; j < 3; j++)
                 {
                     triangleAABB.extend(triangles[i].vs[j]);
-                    box.extend(triangles[i].vs[j]);
                 }
+                triangleAABB.growEps(64);
+                box.extend(triangleAABB);
+
                 elementAABBs_inputs[i].triangleIndex = i;
                 elementAABBs_inputs[i].aabb = triangleAABB;
             }
