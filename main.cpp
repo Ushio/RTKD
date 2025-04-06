@@ -159,6 +159,7 @@ namespace rtkd
         int beg;
         int end;
         AABB aabb;
+        uint64_t slot_ptr;
     };
     struct KDElement
     {
@@ -217,10 +218,26 @@ namespace rtkd
     static const float COST_TRAVERSE = 1.0f;
     static const float COST_INTERSECT = 8.0f;
 
-    struct KDNode
-    {
+    static const uint32_t KD_ALIGNMENT = 16;
+    static const uint32_t KD_LEAF_FLAG = 0x80000000;
+    static const uint32_t KD_INDEX_MASK = 0x7FFFFFFF;
 
+    struct alignas(KD_ALIGNMENT) KDNode
+    {
+        int axis;
+        float boundary;
+        uint32_t childL;
+        uint32_t childR;
     };
+    struct alignas(KD_ALIGNMENT) KDLeaf
+    {
+        AABB bounds;
+        uint32_t triangleBeg;
+        uint32_t triangleEnd;
+    };
+
+    static_assert(sizeof(KDNode) == KD_ALIGNMENT, "");
+    static_assert(sizeof(KDLeaf) == KD_ALIGNMENT * 2, "");
 }
 
 
@@ -338,9 +355,11 @@ int main() {
             tasks_inputs.push_back(
                 {
                     0, (int)triangles.size(),
-                    box
+                    box, 
+                    0xFFFFFFFFFFFFFFFF
                 }
             );
+            std::vector<uint8_t> kdtreeBuffer;
 
             //int maxDepth = 8 + log2(triangles.size());
             int maxDepth = 32;
@@ -552,6 +571,19 @@ int main() {
                         task_L.end = task_L.beg + i_L;
                         task_R.end = task_R.beg + i_R;
 
+                        // emit node
+                        uint64_t nodeIndex = kdtreeBuffer.size() / rtkd::KD_ALIGNMENT;
+                        kdtreeBuffer.resize(kdtreeBuffer.size() + sizeof(rtkd::KDNode));
+                        rtkd::KDNode *node = (rtkd::KDNode *)&kdtreeBuffer[nodeIndex * rtkd::KD_ALIGNMENT];
+                        if (task.slot_ptr != 0xFFFFFFFFFFFFFFFF)
+                        {
+                            uint32_t* slot = (uint32_t *)&kdtreeBuffer[task.slot_ptr];
+                            *slot = (uint32_t)nodeIndex | rtkd::KD_LEAF_FLAG;
+                        }
+
+                        task_L.slot_ptr = (uint8_t*)&node->childL - kdtreeBuffer.data();
+                        task_R.slot_ptr = (uint8_t*)&node->childR - kdtreeBuffer.data();
+
                         if (i_L)
                         {
                             PR_ASSERT(task_L.aabb.isEmpty() == false);
@@ -564,6 +596,7 @@ int main() {
 
                             tasks_outputs.push_back(task_R);
                         }
+
                         //PR_ASSERT(best_nL == i_L);
                         //PR_ASSERT(best_nR == i_R);
 
@@ -641,6 +674,13 @@ int main() {
                             //    DrawAABB(toGLM(elementAABBs_outputs[j].aabb.lower), toGLM(elementAABBs_outputs[j].aabb.upper), { 0, 128, 0 });
                             //}
                         }
+                    }
+                    else
+                    {
+                        uint64_t nodeIndex = kdtreeBuffer.size() / rtkd::KD_ALIGNMENT;
+                        kdtreeBuffer.resize(kdtreeBuffer.size() + sizeof(rtkd::KDLeaf));
+                        rtkd::KDLeaf* node = (rtkd::KDLeaf*)&kdtreeBuffer[nodeIndex * rtkd::KD_ALIGNMENT];
+                        node->bounds = task.aabb;
                     }
                 }
 
