@@ -347,7 +347,7 @@ namespace rtkd
         };
     }
 
-    inline bool intersect_ray_triangle( float* tOut, float* uOut, float* vOut, float knownT, Vec3 ro, Vec3 rd, Vec3 v0, Vec3 v1, Vec3 v2)
+    inline bool intersect_ray_triangle( float* tOut, float* uOut, float* vOut, Vec3* ngOut, float knownT, Vec3 ro, Vec3 rd, Vec3 v0, Vec3 v1, Vec3 v2)
     {
         Vec3 e0 = v1 - v0;
         Vec3 e1 = v2 - v1;
@@ -378,6 +378,7 @@ namespace rtkd
             *tOut = t;
             *uOut = bV;
             *vOut = bW;
+            *ngOut = n;
             return true;
         }
 
@@ -387,6 +388,7 @@ namespace rtkd
     {
         float t = FLT_MAX;
         uint32_t triangleIndex = 0xFFFFFFFF;
+        Vec3 ng;
     };
 
     inline void intersect( KDHit *hit, uint32_t nodeIndex, Vec3 ro, Vec3 rd, Vec3 one_over_rd, float t_min, float t_max, uint8_t* kdBuffer, uint32_t* triangleBuffer, Triangle* triangles)
@@ -412,21 +414,23 @@ namespace rtkd
 
                 float t;
                 float u, v;
-                if (intersect_ray_triangle(&t, &u, &v, hit->t, ro, rd, tri.vs[0], tri.vs[1], tri.vs[2]))
+                Vec3 ng;
+                if (intersect_ray_triangle(&t, &u, &v, &ng, hit->t, ro, rd, tri.vs[0], tri.vs[1], tri.vs[2]))
                 {
                     hit->t = t;
                     hit->triangleIndex = triangleIndex;
+                    hit->ng = ng;
                 }
 
-                pr::PrimBegin(pr::PrimitiveMode::Lines, 2);
-                for (int j = 0; j < 3; ++j)
-                {
-                    rtkd::Vec3 v0 = tri.vs[j];
-                    rtkd::Vec3 v1 = tri.vs[(j + 1) % 3];
-                    pr::PrimVertex({ v0.xs[0], v0.xs[1], v0.xs[2] }, { 255, 0, 255 });
-                    pr::PrimVertex({ v1.xs[0], v1.xs[1], v1.xs[2] }, { 255, 0, 255 });
-                }
-                pr::PrimEnd();
+                //pr::PrimBegin(pr::PrimitiveMode::Lines, 2);
+                //for (int j = 0; j < 3; ++j)
+                //{
+                //    rtkd::Vec3 v0 = tri.vs[j];
+                //    rtkd::Vec3 v1 = tri.vs[(j + 1) % 3];
+                //    pr::PrimVertex({ v0.xs[0], v0.xs[1], v0.xs[2] }, { 255, 0, 255 });
+                //    pr::PrimVertex({ v1.xs[0], v1.xs[1], v1.xs[2] }, { 255, 0, 255 });
+                //}
+                //pr::PrimEnd();
             }
 
             return;
@@ -524,12 +528,15 @@ int main() {
     // std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("4_tris_flat.obj"), err);
     //std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("share.obj"), err);
     
+    ITexture* texture = CreateTexture();
+
     while (pr::NextFrame() == false) {
         if (IsImGuiUsingMouse() == false) {
             UpdateCameraBlenderLike(&camera);
         }
 
-        ClearBackground(0.1f, 0.1f, 0.1f, 1);
+        //ClearBackground(0.1f, 0.1f, 0.1f, 1);
+        ClearBackground(texture);
 
         BeginCamera(camera);
 
@@ -578,20 +585,20 @@ int main() {
                 indexBase += nVerts;
             }
 
-            pr::PrimBegin(pr::PrimitiveMode::Lines);
+            //pr::PrimBegin(pr::PrimitiveMode::Lines);
 
-            for (auto tri : triangles)
-            {
-                for (int j = 0; j < 3; ++j)
-                {
-                    rtkd::Vec3 v0 = tri.vs[j];
-                    rtkd::Vec3 v1 = tri.vs[(j + 1) % 3];
-                    pr::PrimVertex({ v0.xs[0], v0.xs[1], v0.xs[2] }, { 255, 255, 255 });
-                    pr::PrimVertex({ v1.xs[0], v1.xs[1], v1.xs[2] }, { 255, 255, 255 });
-                }
-            }
+            //for (auto tri : triangles)
+            //{
+            //    for (int j = 0; j < 3; ++j)
+            //    {
+            //        rtkd::Vec3 v0 = tri.vs[j];
+            //        rtkd::Vec3 v1 = tri.vs[(j + 1) % 3];
+            //        pr::PrimVertex({ v0.xs[0], v0.xs[1], v0.xs[2] }, { 255, 255, 255 });
+            //        pr::PrimVertex({ v1.xs[0], v1.xs[1], v1.xs[2] }, { 255, 255, 255 });
+            //    }
+            //}
 
-            pr::PrimEnd();
+            //pr::PrimEnd();
 
             // Build KD Tree
             std::vector<rtkd::KDElement> elementAABBs_inputs(triangles.size() * 8);
@@ -965,10 +972,44 @@ int main() {
 
             if (hit.t != FLT_MAX)
             {
-                pr::DrawSphere(toGLM(ro + rd * hit.t), 0.02f, { 255,0,255 });
+                auto hitp = toGLM(ro + rd * hit.t);
+                auto ng = glm::normalize(toGLM(hit.ng));
+                pr::DrawSphere(hitp, 0.02f, { 255,0,255 });
+                pr::DrawArrow(hitp, hitp + ng * 0.2f, 0.01f, { 128 , 128 ,128 });
             }
 
-            printf("");
+            int stride = 2;
+            Image2DRGBA8 image;
+		    image.allocate( GetScreenWidth() / stride, GetScreenHeight() / stride);
+
+		    CameraRayGenerator rayGenerator( GetCurrentViewMatrix(), GetCurrentProjMatrix(), image.width(), image.height() );
+
+		    for( int j = 0; j < image.height(); ++j )
+		    {
+			    for( int i = 0; i < image.width(); ++i )
+			    {
+				    glm::vec3 ro, rd;
+				    rayGenerator.shoot( &ro, &rd, i, j, 0.5f, 0.5f );
+
+                    rtkd::KDHit hit;
+                    rtkd::intersect(&hit, { ro.x, ro.y, ro.z }, { rd.x, rd.y, rd.z }, sceneBounds, kdtreeBuffer.data(), triangleBuffer.data(), triangles.data());
+
+				    if( hit.t != FLT_MAX )
+				    {
+                        glm::vec3 n = toGLM(hit.ng);
+					    n = glm::normalize( n );
+
+					    glm::vec3 color = ( n + glm::vec3( 1.0f ) ) * 0.5f;
+					    image( i, j ) = { 255 * color.r, 255 * color.g, 255 * color.b, 255 };
+				    }
+				    else
+				    {
+					    image( i, j ) = { 0, 0, 0, 255 };
+				    }
+			    }
+		    }
+
+            texture->upload( image );
         });
 
 
