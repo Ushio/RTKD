@@ -27,6 +27,12 @@ namespace rtkd
         return ss_min(ss_max(x, lower), upper);
     }
 
+    struct Vec2
+    {
+        float xs[2];
+        float& operator[](int i) { return xs[i]; }
+        const float& operator[](int i) const { return xs[i]; }
+    };
     struct Vec3
     {
         float xs[3];
@@ -58,6 +64,15 @@ namespace rtkd
         for (int i = 0; i < 3; i++)
         {
             r[i] = a[i] * s;
+        }
+        return r;
+    }
+    inline Vec3 operator*(Vec3 a, Vec3 b)
+    {
+        Vec3 r;
+        for (int i = 0; i < 3; i++)
+        {
+            r[i] = a[i] * b[i];
         }
         return r;
     }
@@ -238,6 +253,66 @@ namespace rtkd
 
     static_assert(sizeof(KDNode) == KD_ALIGNMENT, "");
     static_assert(sizeof(KDLeaf) == KD_ALIGNMENT * 2, "");
+
+    inline Vec3 vmin(Vec3 a, Vec3 b)
+    {
+        Vec3 r;
+        for (int axis = 0; axis < 3; axis++)
+        {
+            r[axis] = ss_min(a[axis], b[axis]);
+        }
+        return r;
+    }
+    inline Vec3 vmax(Vec3 a, Vec3 b)
+    {
+        Vec3 r;
+        for (int axis = 0; axis < 3; axis++)
+        {
+            r[axis] = ss_max(a[axis], b[axis]);
+        }
+        return r;
+    }
+    inline float compMin(Vec3 v)
+    {
+        return ss_min(ss_min(v[0], v[1]), v[2]);
+    }
+    inline float compMax(Vec3 v)
+    {
+        return ss_max(ss_max(v[0], v[1]), v[2]);
+    }
+    inline Vec2 slabs(Vec3 ro, Vec3 one_over_rd, Vec3 lower, Vec3 upper )
+    {
+        Vec3 t0 = (lower - ro) * one_over_rd;
+        Vec3 t1 = (upper - ro) * one_over_rd;
+
+        Vec3 tmin = vmin(t0, t1);
+        Vec3 tmax = vmax(t0, t1);
+        float region_min = compMax(tmin);
+        float region_max = compMin(tmax);
+
+        region_min = fmaxf(region_min, 0.0f);
+
+        return { region_min, region_max };
+    }
+    inline void intersect(Vec3 ro, Vec3 rd, AABB bounds, uint8_t* kdBuffer, uint32_t* triangleBuffer, Triangle* triangles)
+    {
+        Vec3 one_over_rd;
+        for (int axis = 0; axis < 3; axis++)
+        {
+            one_over_rd[axis] = ss_clamp(1.0f / rd[axis], -FLT_MAX, FLT_MAX);
+        }
+
+        Vec2 range = slabs(ro, one_over_rd, bounds.lower, bounds.upper);
+        if (range[1] < range[0] )
+        {
+            return;
+        }
+
+        pr::DrawSphere(toGLM(ro + rd * range[0]), 0.02f, { 255,255,255 });
+        pr::DrawSphere(toGLM(ro + rd * range[1]), 0.02f, { 255,255,0 });
+
+
+    }
 }
 
 
@@ -258,14 +333,14 @@ int main() {
     Initialize(config);
 
     Camera3D camera;
-    camera.origin = { 4, 4, 4 };
+    camera.origin = { 0, 4, 4 };
     camera.lookat = { 0, 0, 0 };
 
     double e = GetElapsedTime();
 
     SetDataDir(ExecutableDir());
     std::string err;
-    std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("test.obj"), err);
+    std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("4_tris.obj"), err);
     // std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("4_tris_flat.obj"), err);
     //std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("share.obj"), err);
     
@@ -283,10 +358,19 @@ int main() {
         DrawGrid(GridAxis::XZ, 1.0f, 10, { 128, 128, 128 });
         DrawXYZAxis(1.0f);
 
+        static glm::vec3 ro = { 1, 1, 1 };
+        static glm::vec3 to = { -1, -1, -1 };
+
+        glm::vec3 rd = to - ro;
+        
+        ManipulatePosition(camera, &ro, 0.2f);
+        ManipulatePosition(camera, &to, 0.2f);
+        DrawLine(ro, ro + rd * 10.0f, { 128, 128, 128 });
+
         // hmm still some bad aabb..
         static int debug_index = -1;
 
-        scene->visitPolyMesh([](std::shared_ptr<const FPolyMeshEntity> polymesh) {
+        scene->visitPolyMesh([&](std::shared_ptr<const FPolyMeshEntity> polymesh) {
             if (polymesh->visible() == false)
             {
                 return;
@@ -333,8 +417,8 @@ int main() {
             std::vector<rtkd::KDElement> elementAABBs_inputs(triangles.size() * 8);
             std::vector<rtkd::KDElement> elementAABBs_outputs(triangles.size() * 8);
 
-            rtkd::AABB box;
-            box.setEmpty();
+            rtkd::AABB sceneBounds;
+            sceneBounds.setEmpty();
             for (int i = 0; i < triangles.size(); i++)
             {
                 rtkd::AABB triangleAABB;
@@ -344,7 +428,7 @@ int main() {
                     triangleAABB.extend(triangles[i].vs[j]);
                 }
                 triangleAABB.growEps(64);
-                box.extend(triangleAABB);
+                sceneBounds.extend(triangleAABB);
 
                 elementAABBs_inputs[i].triangleIndex = i;
                 elementAABBs_inputs[i].aabb = triangleAABB;
@@ -355,7 +439,7 @@ int main() {
             tasks_inputs.push_back(
                 {
                     0, (int)triangles.size(),
-                    box, 
+                    sceneBounds,
                     0xFFFFFFFFFFFFFFFF
                 }
             );
@@ -697,8 +781,11 @@ int main() {
 
             fin:
 
+            rtkd::intersect({ ro.x, ro.y, ro.z }, { rd.x, rd.y, rd.z }, sceneBounds, kdtreeBuffer.data(), triangleBuffer.data(), triangles.data());
+
             printf("");
         });
+
 
         PopGraphicState();
         EndCamera();
