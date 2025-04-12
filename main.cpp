@@ -124,10 +124,21 @@ namespace rtkd
             Vec3 size = upper - lower;
             return (size[0] * size[1] + size[1] * size[2] + size[2] * size[0]) * 2.0f;
         }
-        float volume() const
+        //float volume() const
+        //{
+        //    Vec3 size = upper - lower;
+        //    return size[0] * size[1] * size[2];
+        //}
+        bool hasVolume()
         {
-            Vec3 size = upper - lower;
-            return size[0] * size[1] * size[2];
+            for (int i = 0; i < 3; i++)
+            {
+                if (upper[i] <= lower[i])
+                {
+                    return false;
+                }
+            }
+            return true;
         }
         bool isIntersect(const AABB& rhs) const
         {
@@ -182,16 +193,38 @@ namespace rtkd
         AABB aabb;
     };
 
-    inline int bucket( float x, float lower, float upper, int nBins )
-    {
-        int index = (int)( (x - lower) * nBins / (upper - lower) );
-        return ss_min(ss_max(0, index), nBins - 1);
-    }
+    //inline int bucket( float x, float lower, float upper, int nBins )
+    //{
+    //    int index = (int)( (x - lower) * nBins / (upper - lower) );
+    //    return ss_min(ss_max(0, index), nBins - 1);
+    //}
 
     // i=0: lower, i=nBins: upper
     inline float border(int i, float lower, float upper, int nBins)
     {
         return lower + (upper - lower) / nBins * i;
+    }
+
+    // strictly border-based binning
+    inline int bucket(float x, float lower, float upper, int nBins)
+    {
+        int beg = 0;
+        int end = nBins;
+
+        while( beg + 1 < end )
+        {
+            int mid = (beg + end) / 2;
+            float b = border(mid, lower, upper, nBins);
+            if (x < b)
+            {
+                end = mid;
+            }
+            else
+            {
+                beg = mid;
+            }
+        }
+        return beg;
     }
 
     inline void divide_clip(AABB* L, AABB *R, const AABB& baseAABB, Vec3 a, Vec3 b, Vec3 c, float boundary, int axis, int nEps )
@@ -445,6 +478,26 @@ namespace rtkd
 
 void test()
 {
+    int nBins = 32;
+    pr::PCG rng;
+    for (int i = 0; i < 10000; i++)
+    {
+        float lower = glm::mix( -10.0f, 10.0f, rng.uniformf());
+        float upper = lower + 0.0001f + rng.uniformf() * 10.0f;
+        for (int j = 0; j < 10000; j++)
+        {
+            float x = glm::mix( lower, upper, rng.uniformf() ); 
+            x = glm::clamp( x, lower, nextafterf(upper, -FLT_MAX));
+
+            int b = rtkd::bucket(x, lower, upper, nBins);
+
+            float L = rtkd::border(b, lower, upper, nBins);
+            float R = rtkd::border(b + 1, lower, upper, nBins);
+
+            PR_ASSERT(L <= x);
+            PR_ASSERT(x < R);
+        }
+    }
 
 }
 
@@ -607,10 +660,10 @@ int main() {
                     enum { NBins = 32 };
                     for (int axis = 0; axis < 3; axis++)
                     {
-                        //if (task.aabb.lower[axis] - task.aabb.lower[axis] < 1.0e-4f)
-                        //{
-
-                        //}
+                        if (task.aabb.upper[axis] - task.aabb.lower[axis] < FLT_EPSILON )
+                        {
+                            continue;
+                        }
 
                         int min_bins[NBins] = {};
                         int max_bins[NBins] = {};
@@ -709,7 +762,7 @@ int main() {
                             {
                                 if (clippedL.isEmpty() == false)
                                 {
-                                    PR_ASSERT(0.0f < clippedL.volume());
+                                    PR_ASSERT(clippedL.hasVolume());
                                     rtkd::KDElement clipped = elem;
                                     clipped.aabb = clippedL;
                                     elementAABBs_outputs[task_L.beg + i_L++] = clipped;
@@ -721,7 +774,7 @@ int main() {
                             {
                                 if (clippedR.isEmpty() == false)
                                 {
-                                    PR_ASSERT(0.0f < clippedR.volume());
+                                    PR_ASSERT(clippedR.hasVolume());
                                     rtkd::KDElement clipped = elem;
                                     clipped.aabb = clippedR;
                                     elementAABBs_outputs[task_R.beg + i_R++] = clipped;
