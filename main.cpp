@@ -270,6 +270,8 @@ namespace rtkd
     static const uint32_t KD_LEAF_FLAG = 0x80000000;
     static const uint32_t KD_INDEX_MASK = 0x7FFFFFFF;
 
+    static const uint32_t KD_CONTINUE_BIT = 0x80000000;
+
     struct alignas(KD_ALIGNMENT) KDNode
     {
         int axis;
@@ -397,7 +399,7 @@ namespace rtkd
         {
             return;
         }
-        if (hit->triangleIndex != 0xFFFFFFFF)
+        if ((hit->triangleIndex & KD_CONTINUE_BIT) == 0)
         {
             return;
         }
@@ -417,9 +419,15 @@ namespace rtkd
                 Vec3 ng;
                 if (intersect_ray_triangle(&t, &u, &v, &ng, hit->t, ro, rd, tri.vs[0], tri.vs[1], tri.vs[2]))
                 {
+                    // printf("%.8f %.8f | %.8f -> %.8f\n", t_min, t_max, hit->t, t);
                     hit->t = t;
                     hit->triangleIndex = triangleIndex;
                     hit->ng = ng;
+
+                    if (t < t_min || t_max < t)
+                    {
+                        hit->triangleIndex |= KD_CONTINUE_BIT;
+                    }
                 }
 
                 //pr::PrimBegin(pr::PrimitiveMode::Lines, 2);
@@ -476,6 +484,11 @@ namespace rtkd
         }
 
         intersect(hit, 0, ro, rd, one_over_rd, range[0], range[1], kdBuffer, triangleBuffer, triangles );
+
+        if( hit->t != FLT_MAX )
+        {
+            hit->triangleIndex &= ~KD_CONTINUE_BIT;
+        }
     }
 }
 
@@ -528,6 +541,8 @@ int main() {
     // std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("4_tris_flat.obj"), err);
     //std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("share.obj"), err);
     
+    bool showWire = true;
+
     ITexture* texture = CreateTexture();
 
     while (pr::NextFrame() == false) {
@@ -545,7 +560,8 @@ int main() {
         DrawGrid(GridAxis::XZ, 1.0f, 10, { 128, 128, 128 });
         DrawXYZAxis(1.0f);
 
-        static glm::vec3 ro = { 1, 1, 1 };
+        //static glm::vec3 ro = { 1, 1, 1 };
+        static glm::vec3 ro = { 0.428085, 0.890613, 0.028283 };
         static glm::vec3 to = { -1, -1, -1 };
 
         glm::vec3 rd = to - ro;
@@ -585,20 +601,23 @@ int main() {
                 indexBase += nVerts;
             }
 
-            //pr::PrimBegin(pr::PrimitiveMode::Lines);
+            if (showWire)
+            {
+                pr::PrimBegin(pr::PrimitiveMode::Lines);
 
-            //for (auto tri : triangles)
-            //{
-            //    for (int j = 0; j < 3; ++j)
-            //    {
-            //        rtkd::Vec3 v0 = tri.vs[j];
-            //        rtkd::Vec3 v1 = tri.vs[(j + 1) % 3];
-            //        pr::PrimVertex({ v0.xs[0], v0.xs[1], v0.xs[2] }, { 255, 255, 255 });
-            //        pr::PrimVertex({ v1.xs[0], v1.xs[1], v1.xs[2] }, { 255, 255, 255 });
-            //    }
-            //}
+                for (auto tri : triangles)
+                {
+                    for (int j = 0; j < 3; ++j)
+                    {
+                        rtkd::Vec3 v0 = tri.vs[j];
+                        rtkd::Vec3 v1 = tri.vs[(j + 1) % 3];
+                        pr::PrimVertex({ v0.xs[0], v0.xs[1], v0.xs[2] }, { 255, 255, 255 });
+                        pr::PrimVertex({ v1.xs[0], v1.xs[1], v1.xs[2] }, { 255, 255, 255 });
+                    }
+                }
 
-            //pr::PrimEnd();
+                pr::PrimEnd();
+            }
 
             // Build KD Tree
             std::vector<rtkd::KDElement> elementAABBs_inputs(triangles.size() * 8);
@@ -978,7 +997,8 @@ int main() {
                 pr::DrawArrow(hitp, hitp + ng * 0.2f, 0.01f, { 128 , 128 ,128 });
             }
 
-            int stride = 2;
+#if 1
+            int stride = 1;
             Image2DRGBA8 image;
 		    image.allocate( GetScreenWidth() / stride, GetScreenHeight() / stride);
 
@@ -1010,6 +1030,7 @@ int main() {
 		    }
 
             texture->upload( image );
+#endif
         });
 
 
@@ -1023,6 +1044,12 @@ int main() {
         ImGui::Text("fps = %f", GetFrameRate());
         ImGui::InputInt("debug index", &debug_index);
 
+        ImGui::Checkbox("showWire", &showWire);
+        if (ImGui::Button("dump"))
+        {
+            printf("ro = {%f, %f, %f}\n", ro.x, ro.y, ro.z);
+            printf("to = {%f, %f, %f}\n", to.x, to.y, to.z);
+        }
         ImGui::End();
 
         EndImGui();
