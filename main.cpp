@@ -360,6 +360,7 @@ int main() {
                 }
             );
             std::vector<uint8_t> kdtreeBuffer;
+            std::vector<uint32_t> triangleBuffer;
 
             //int maxDepth = 8 + log2(triangles.size());
             int maxDepth = 32;
@@ -377,8 +378,6 @@ int main() {
                     int best_nR = 0;
                     rtkd::AABB best_aabbL;
                     rtkd::AABB best_aabbR;
-                    float best_maxL = 0.0f;
-                    float best_minR = 0.0f;
                     float best_cost = nElement * rtkd::COST_INTERSECT;
 
                     /*
@@ -405,9 +404,6 @@ int main() {
                         int min_bins[NBins] = {};
                         int max_bins[NBins] = {};
 
-                        float max_L = -FLT_MAX;
-                        float min_R = +FLT_MAX;
-
                         for (int i = task.beg; i != task.end; i++)
                         {
                             rtkd::AABB box = elementAABBs_inputs[i].aabb;
@@ -415,8 +411,6 @@ int main() {
                             int index_max = rtkd::bucket(box.upper[axis], task.aabb.lower[axis], task.aabb.upper[axis], NBins);
                             min_bins[index_min]++;
                             max_bins[index_max]++;
-                            max_L = rtkd::ss_max(max_L, box.upper[axis]);
-                            min_R = rtkd::ss_min(min_R, box.lower[axis]);
                         }
 
                         // inclusive prefix sum
@@ -462,39 +456,75 @@ int main() {
                                 best_nR = nR;
                                 best_aabbL = L;
                                 best_aabbR = R;
-                                best_maxL = max_L;
-                                best_minR = min_R;
                             }
                         }
                     }
 
                     if (0 < best_i_split)
                     {
-                        // update boundary 
+                        // this can be tightly fit. although divide_clip uses this boundary but fitting does not affect the clipping.
                         float boundary = rtkd::border(best_i_split, task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
-                        if (best_nL + best_nR == nElement)
-                        {
-                            float lMax = -FLT_MAX;
-                            float rMin = FLT_MAX;
-                            for (int i = task.beg; i != task.end; i++)
-                            {
-                                rtkd::KDElement elem = elementAABBs_inputs[i];
-                                int index_min = rtkd::bucket(elem.aabb.lower[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
-                                int index_max = rtkd::bucket(elem.aabb.upper[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
+                        
+                        int alloc_head = output_counter;
+                        output_counter += best_nL + best_nR;
 
-                                if (index_min < best_i_split)
+                        PR_ASSERT(output_counter <= elementAABBs_outputs.size());
+
+                        rtkd::KDTask task_L;
+                        rtkd::KDTask task_R;
+
+                        task_L.beg = alloc_head;
+                        task_R.beg = alloc_head + best_nL;
+
+                        //printf("%d -> %d %d\n", nElement, best_nL, best_nR);
+                        float lMax = -FLT_MAX;
+                        float rMin = +FLT_MAX;
+                        int i_L = 0;
+                        int i_R = 0;
+                        for (int i = task.beg; i != task.end; i++)
+                        {
+                            rtkd::KDElement elem = elementAABBs_inputs[i];
+                            int index_min = rtkd::bucket(elem.aabb.lower[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
+                            int index_max = rtkd::bucket(elem.aabb.upper[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
+
+                            rtkd::Triangle triangle = triangles[elem.triangleIndex];
+                            rtkd::AABB clippedL, clippedR;
+                            divide_clip(&clippedL, &clippedR, elem.aabb, triangle.vs[0], triangle.vs[1], triangle.vs[2], boundary, best_axis, 64);
+
+                            clippedL = task.aabb.intersect(clippedL);
+                            clippedR = task.aabb.intersect(clippedR);
+
+                            if (index_min < best_i_split)
+                            {
+                                if (clippedL.isEmpty() == false)
                                 {
+                                    PR_ASSERT(0.0f < clippedL.volume());
+                                    rtkd::KDElement clipped = elem;
+                                    clipped.aabb = clippedL;
+                                    elementAABBs_outputs[task_L.beg + i_L++] = clipped;
+
                                     lMax = rtkd::ss_max(lMax, elem.aabb.upper[best_axis]);
                                 }
-                                if (best_i_split <= index_max)
+                            }
+                            if (best_i_split <= index_max)
+                            {
+                                if (clippedR.isEmpty() == false)
                                 {
+                                    PR_ASSERT(0.0f < clippedR.volume());
+                                    rtkd::KDElement clipped = elem;
+                                    clipped.aabb = clippedR;
+                                    elementAABBs_outputs[task_R.beg + i_R++] = clipped;
+
                                     rMin = rtkd::ss_min(rMin, elem.aabb.lower[best_axis]);
                                 }
                             }
+                        }
 
-                            PR_ASSERT(lMax <= rMin );
+                        if (best_nL + best_nR == nElement) // meaning no overlap, update boundary to fit
+                        {
+                            PR_ASSERT(lMax <= rMin);
 
-                            if( best_nL == 0 )
+                            if (best_nL == 0)
                             {
                                 boundary = rMin;
                             }
@@ -508,65 +538,13 @@ int main() {
                             }
                         }
 
-                        best_aabbL.upper[best_axis] = boundary;
-                        best_aabbR.lower[best_axis] = boundary;
-
-                        int alloc_head = output_counter;
-                        output_counter += best_nL + best_nR;
-
-                        PR_ASSERT(output_counter <= elementAABBs_outputs.size());
-
-                        rtkd::KDTask task_L;
-                        rtkd::KDTask task_R;
-
-                        task_L.beg = alloc_head;
-                        //task_L.end = output_counter + best_nL;
-                        task_L.aabb = best_aabbL;
-                        task_R.beg = alloc_head + best_nL;
-                        //task_R.end = output_counter + best_nL + best_nR;
-                        task_R.aabb = best_aabbR;
-
-                        //printf("%d -> %d %d\n", nElement, best_nL, best_nR);
-
-                        int i_L = 0;
-                        int i_R = 0;
-                        for (int i = task.beg; i != task.end; i++)
-                        {
-                            rtkd::KDElement elem = elementAABBs_inputs[i];
-                            int index_min = rtkd::bucket(elem.aabb.lower[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
-                            int index_max = rtkd::bucket(elem.aabb.upper[best_axis], task.aabb.lower[best_axis], task.aabb.upper[best_axis], NBins);
-
-                            rtkd::Triangle triangle = triangles[elem.triangleIndex];
-                            rtkd::AABB clippedL, clippedR;
-                            divide_clip(&clippedL, &clippedR, elem.aabb, triangle.vs[0], triangle.vs[1], triangle.vs[2], boundary, best_axis, 64);
-
-                            clippedL = best_aabbL.intersect(clippedL);
-                            clippedR = best_aabbR.intersect(clippedR);
-
-                            if (index_min < best_i_split)
-                            {
-                                if (clippedL.isEmpty() == false)
-                                {
-                                    PR_ASSERT(0.0f < clippedL.volume());
-                                    rtkd::KDElement clipped = elem;
-                                    clipped.aabb = clippedL;
-                                    elementAABBs_outputs[task_L.beg + i_L++] = clipped;
-                                }
-                            }
-                            if (best_i_split <= index_max)
-                            {
-                                if (clippedR.isEmpty() == false)
-                                {
-                                    PR_ASSERT(0.0f < clippedR.volume());
-                                    rtkd::KDElement clipped = elem;
-                                    clipped.aabb = clippedR;
-                                    elementAABBs_outputs[task_R.beg + i_R++] = clipped;
-                                }
-                            }
-                        }
-
                         //printf("L %d->%d\n", best_nL, i_L);
                         //printf("R %d->%d\n", best_nR, i_R);
+
+                        best_aabbL.upper[best_axis] = boundary;
+                        best_aabbR.lower[best_axis] = boundary;
+                        task_L.aabb = best_aabbL;
+                        task_R.aabb = best_aabbR;
 
                         task_L.end = task_L.beg + i_L;
                         task_R.end = task_R.beg + i_R;
@@ -575,10 +553,14 @@ int main() {
                         uint64_t nodeIndex = kdtreeBuffer.size() / rtkd::KD_ALIGNMENT;
                         kdtreeBuffer.resize(kdtreeBuffer.size() + sizeof(rtkd::KDNode));
                         rtkd::KDNode *node = (rtkd::KDNode *)&kdtreeBuffer[nodeIndex * rtkd::KD_ALIGNMENT];
+                        node->axis = best_axis;
+                        node->boundary = boundary;
+                        node->childL = 0xFFFFFFFF;
+                        node->childR = 0xFFFFFFFF;
                         if (task.slot_ptr != 0xFFFFFFFFFFFFFFFF)
                         {
                             uint32_t* slot = (uint32_t *)&kdtreeBuffer[task.slot_ptr];
-                            *slot = (uint32_t)nodeIndex | rtkd::KD_LEAF_FLAG;
+                            *slot = (uint32_t)nodeIndex;
                         }
 
                         task_L.slot_ptr = (uint8_t*)&node->childL - kdtreeBuffer.data();
@@ -681,6 +663,23 @@ int main() {
                         kdtreeBuffer.resize(kdtreeBuffer.size() + sizeof(rtkd::KDLeaf));
                         rtkd::KDLeaf* node = (rtkd::KDLeaf*)&kdtreeBuffer[nodeIndex * rtkd::KD_ALIGNMENT];
                         node->bounds = task.aabb;
+
+                        // triangleBuffer
+                        uint32_t nTriangles = task.end - task.beg;
+                        node->triangleBeg = triangleBuffer.size();
+                        triangleBuffer.resize(triangleBuffer.size() + nTriangles);
+                        node->triangleEnd = node->triangleBeg + nTriangles;
+
+                        for (int i = 0; i != nTriangles; i++)
+                        {
+                            triangleBuffer[node->triangleBeg + i] = elementAABBs_inputs[task.beg + i].triangleIndex;
+                        }
+
+                        if (task.slot_ptr != 0xFFFFFFFFFFFFFFFF)
+                        {
+                            uint32_t* slot = (uint32_t*)&kdtreeBuffer[task.slot_ptr];
+                            *slot = (uint32_t)nodeIndex | rtkd::KD_LEAF_FLAG;
+                        }
                     }
                 }
 
