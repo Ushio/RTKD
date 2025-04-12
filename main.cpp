@@ -246,13 +246,12 @@ namespace rtkd
     };
     struct alignas(KD_ALIGNMENT) KDLeaf
     {
-        AABB bounds;
         uint32_t triangleBeg;
         uint32_t triangleEnd;
     };
 
     static_assert(sizeof(KDNode) == KD_ALIGNMENT, "");
-    static_assert(sizeof(KDLeaf) == KD_ALIGNMENT * 2, "");
+    static_assert(sizeof(KDLeaf) == KD_ALIGNMENT, "");
 
     inline Vec3 vmin(Vec3 a, Vec3 b)
     {
@@ -315,7 +314,7 @@ namespace rtkd
         };
     }
 
-    inline bool intersect_ray_triangle( float* tOut, float* uOut, float* vOut, Vec3 ro, Vec3 rd, Vec3 v0, Vec3 v1, Vec3 v2)
+    inline bool intersect_ray_triangle( float* tOut, float* uOut, float* vOut, float knownT, Vec3 ro, Vec3 rd, Vec3 v0, Vec3 v1, Vec3 v2)
     {
         Vec3 e0 = v1 - v0;
         Vec3 e1 = v2 - v1;
@@ -323,7 +322,7 @@ namespace rtkd
 
         Vec3 n = cross(e0, e1);
         float t = dot(v0 - ro, n) / dot(n, rd);
-        if (0.0f <= t && t < 3.402823466e+38f)
+        if (0.0f <= t && t < knownT)
         {
             Vec3 p = ro + rd * t;
 
@@ -380,21 +379,21 @@ namespace rtkd
 
                 float t;
                 float u, v;
-                if (intersect_ray_triangle(&t, &u, &v, ro, rd, tri.vs[0], tri.vs[1], tri.vs[2]) && t < hit->t)
+                if (intersect_ray_triangle(&t, &u, &v, hit->t, ro, rd, tri.vs[0], tri.vs[1], tri.vs[2]))
                 {
                     hit->t = t;
                     hit->triangleIndex = triangleIndex;
                 }
 
-                //pr::PrimBegin(pr::PrimitiveMode::Lines, 2);
-                //for (int j = 0; j < 3; ++j)
-                //{
-                //    rtkd::Vec3 v0 = tri.vs[j];
-                //    rtkd::Vec3 v1 = tri.vs[(j + 1) % 3];
-                //    pr::PrimVertex({ v0.xs[0], v0.xs[1], v0.xs[2] }, { 255, 0, 255 });
-                //    pr::PrimVertex({ v1.xs[0], v1.xs[1], v1.xs[2] }, { 255, 0, 255 });
-                //}
-                //pr::PrimEnd();
+                pr::PrimBegin(pr::PrimitiveMode::Lines, 2);
+                for (int j = 0; j < 3; ++j)
+                {
+                    rtkd::Vec3 v0 = tri.vs[j];
+                    rtkd::Vec3 v1 = tri.vs[(j + 1) % 3];
+                    pr::PrimVertex({ v0.xs[0], v0.xs[1], v0.xs[2] }, { 255, 0, 255 });
+                    pr::PrimVertex({ v1.xs[0], v1.xs[1], v1.xs[2] }, { 255, 0, 255 });
+                }
+                pr::PrimEnd();
             }
 
             return;
@@ -468,7 +467,7 @@ int main() {
 
     SetDataDir(ExecutableDir());
     std::string err;
-    std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("4_tris.obj"), err);
+    std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("test.obj"), err);
     // std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("4_tris_flat.obj"), err);
     //std::shared_ptr<FScene> scene = ReadWavefrontObj(GetDataPath("share.obj"), err);
     
@@ -874,7 +873,6 @@ int main() {
                         uint64_t nodeIndex = kdtreeBuffer.size() / rtkd::KD_ALIGNMENT;
                         kdtreeBuffer.resize(kdtreeBuffer.size() + sizeof(rtkd::KDLeaf));
                         rtkd::KDLeaf* node = (rtkd::KDLeaf*)&kdtreeBuffer[nodeIndex * rtkd::KD_ALIGNMENT];
-                        node->bounds = task.aabb;
 
                         // triangleBuffer
                         uint32_t nTriangles = task.end - task.beg;
@@ -900,7 +898,7 @@ int main() {
                     break;
                 }
 
-                printf("stage %d, o=%d\n", i_task, output_counter);
+                printf("stage %d, o=%d / %d tri\n", i_task, output_counter, (int)triangles.size());
 
                 tasks_inputs.clear();
                 std::swap(tasks_inputs, tasks_outputs);
