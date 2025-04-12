@@ -280,6 +280,7 @@ namespace rtkd
     {
         return ss_max(ss_max(v[0], v[1]), v[2]);
     }
+
     inline Vec2 slabs(Vec3 ro, Vec3 one_over_rd, Vec3 lower, Vec3 upper )
     {
         Vec3 t0 = (lower - ro) * one_over_rd;
@@ -294,7 +295,137 @@ namespace rtkd
 
         return { region_min, region_max };
     }
-    inline void intersect(Vec3 ro, Vec3 rd, AABB bounds, uint8_t* kdBuffer, uint32_t* triangleBuffer, Triangle* triangles)
+
+    inline float dot(Vec3 a, Vec3 b)
+    {
+        float r = 0.0f;
+        for (int axis = 0; axis < 3; axis++)
+        {
+            r += a[axis] * b[axis];
+        }
+        return r;
+    }
+
+    inline Vec3 cross(Vec3 a, Vec3 b)
+    {
+        return {
+            a[1] * b[2] - b[1] * a[2],
+            a[2] * b[0] - b[2] * a[0],
+            a[0] * b[1] - b[0] * a[1]
+        };
+    }
+
+    inline bool intersect_ray_triangle( float* tOut, float* uOut, float* vOut, Vec3 ro, Vec3 rd, Vec3 v0, Vec3 v1, Vec3 v2)
+    {
+        Vec3 e0 = v1 - v0;
+        Vec3 e1 = v2 - v1;
+        Vec3 e2 = v0 - v2;
+
+        Vec3 n = cross(e0, e1);
+        float t = dot(v0 - ro, n) / dot(n, rd);
+        if (0.0f <= t && t < 3.402823466e+38f)
+        {
+            Vec3 p = ro + rd * t;
+
+            float n2TriArea0 = dot(n, cross(e0, p - v0));  // |n| * 2 * tri_area( p, v0, v1 )
+            float n2TriArea1 = dot(n, cross(e1, p - v1));  // |n| * 2 * tri_area( p, v1, v2 )
+            float n2TriArea2 = dot(n, cross(e2, p - v2));  // |n| * 2 * tri_area( p, v2, v0 )
+
+            if (n2TriArea0 < 0.0f || n2TriArea1 < 0.0f || n2TriArea2 < 0.0f)
+            {
+                return false;
+            }
+
+            float n2TriArea = n2TriArea0 + n2TriArea1 + n2TriArea2;  // |n| * 2 * tri_area( v0, v1, v2 )
+
+            // Barycentric Coordinates
+            float bW = n2TriArea0 / n2TriArea;  // tri_area( p, v0, v1 ) / tri_area( v0, v1, v2 )
+            float bU = n2TriArea1 / n2TriArea;  // tri_area( p, v1, v2 ) / tri_area( v0, v1, v2 )
+            float bV = n2TriArea2 / n2TriArea;  // tri_area( p, v2, v0 ) / tri_area( v0, v1, v2 )
+
+            *tOut = t;
+            *uOut = bV;
+            *vOut = bW;
+            return true;
+        }
+
+        return false;
+    }
+    struct KDHit
+    {
+        float t = FLT_MAX;
+        uint32_t triangleIndex = 0xFFFFFFFF;
+    };
+
+    inline void intersect( KDHit *hit, uint32_t nodeIndex, Vec3 ro, Vec3 rd, Vec3 one_over_rd, float t_min, float t_max, uint8_t* kdBuffer, uint32_t* triangleBuffer, Triangle* triangles)
+    {
+        if (nodeIndex == 0xFFFFFFFF)
+        {
+            return;
+        }
+        if (hit->triangleIndex != 0xFFFFFFFF)
+        {
+            return;
+        }
+
+        // assume root is KDNode
+        if (nodeIndex & KD_LEAF_FLAG)
+        {
+            nodeIndex &= KD_INDEX_MASK;
+            KDLeaf* leaf = (KDLeaf*)&kdBuffer[(uint64_t)nodeIndex * KD_ALIGNMENT];
+            for (int i = leaf->triangleBeg; i != leaf->triangleEnd; i++)
+            {
+                uint32_t triangleIndex = triangleBuffer[i];
+                Triangle tri = triangles[triangleIndex];
+
+                float t;
+                float u, v;
+                if (intersect_ray_triangle(&t, &u, &v, ro, rd, tri.vs[0], tri.vs[1], tri.vs[2]) && t < hit->t)
+                {
+                    hit->t = t;
+                    hit->triangleIndex = triangleIndex;
+                }
+
+                //pr::PrimBegin(pr::PrimitiveMode::Lines, 2);
+                //for (int j = 0; j < 3; ++j)
+                //{
+                //    rtkd::Vec3 v0 = tri.vs[j];
+                //    rtkd::Vec3 v1 = tri.vs[(j + 1) % 3];
+                //    pr::PrimVertex({ v0.xs[0], v0.xs[1], v0.xs[2] }, { 255, 0, 255 });
+                //    pr::PrimVertex({ v1.xs[0], v1.xs[1], v1.xs[2] }, { 255, 0, 255 });
+                //}
+                //pr::PrimEnd();
+            }
+
+            return;
+        }
+        KDNode* node = (KDNode*)&kdBuffer[(uint64_t)nodeIndex * KD_ALIGNMENT];
+
+        float t = (node->boundary - ro[node->axis]) * one_over_rd[node->axis];
+
+        uint32_t childL = node->childL;
+        uint32_t childR = node->childR;
+        if (one_over_rd[node->axis] < 0.0f)
+        {
+            std::swap(childL, childR);
+        }
+
+        if (t_max <= t)
+        {
+            intersect(hit, childL, ro, rd, one_over_rd, t_min, t_max, kdBuffer, triangleBuffer, triangles);
+        }
+        else if (t <= t_min)
+        {
+            intersect(hit, childR, ro, rd, one_over_rd, t_min, t_max, kdBuffer, triangleBuffer, triangles);
+        }
+        else
+        {
+            intersect(hit, childL, ro, rd, one_over_rd, t_min, t, kdBuffer, triangleBuffer, triangles);
+            intersect(hit, childR, ro, rd, one_over_rd, t, t_max, kdBuffer, triangleBuffer, triangles);
+        }
+    }
+
+    inline void intersect(KDHit *hit, Vec3 ro, Vec3 rd, AABB bounds, uint8_t* kdBuffer, uint32_t* triangleBuffer, Triangle* triangles)
     {
         Vec3 one_over_rd;
         for (int axis = 0; axis < 3; axis++)
@@ -308,10 +439,7 @@ namespace rtkd
             return;
         }
 
-        pr::DrawSphere(toGLM(ro + rd * range[0]), 0.02f, { 255,255,255 });
-        pr::DrawSphere(toGLM(ro + rd * range[1]), 0.02f, { 255,255,0 });
-
-
+        intersect(hit, 0, ro, rd, one_over_rd, range[0], range[1], kdBuffer, triangleBuffer, triangles );
     }
 }
 
@@ -781,7 +909,13 @@ int main() {
 
             fin:
 
-            rtkd::intersect({ ro.x, ro.y, ro.z }, { rd.x, rd.y, rd.z }, sceneBounds, kdtreeBuffer.data(), triangleBuffer.data(), triangles.data());
+            rtkd::KDHit hit;
+            rtkd::intersect(&hit, { ro.x, ro.y, ro.z }, { rd.x, rd.y, rd.z }, sceneBounds, kdtreeBuffer.data(), triangleBuffer.data(), triangles.data());
+
+            if (hit.t != FLT_MAX)
+            {
+                pr::DrawSphere(toGLM(ro + rd * hit.t), 0.02f, { 255,0,255 });
+            }
 
             printf("");
         });
