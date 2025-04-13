@@ -510,14 +510,11 @@ namespace rtkd
                 }
             }
 
-            //printf("%.8f %.8f\n", t_min, t_max);
-
             if (nodeIndex != 0xFFFFFFFF)
             {
                 nodeIndex &= KD_INDEX_MASK;
                 KDLeaf* leaf = (KDLeaf*)&kdBuffer[(uint64_t)nodeIndex * KD_ALIGNMENT];
 
-                bool earlyTerminate = false;
                 for (int i = leaf->triangleBeg; i != leaf->triangleEnd; i++)
                 {
                     uint32_t triangleIndex = triangleBuffer[i];
@@ -526,17 +523,11 @@ namespace rtkd
                     float t;
                     float u, v;
                     Vec3 ng;
-                    if (intersect_ray_triangle(&t, &u, &v, &ng, 0.0f, hit->t, ro, rd, tri.vs[0], tri.vs[1], tri.vs[2]))
+                    if (intersect_ray_triangle(&t, &u, &v, &ng, t_min, ss_min(hit->t, t_max), ro, rd, tri.vs[0], tri.vs[1], tri.vs[2]))
                     {
-                        // printf("%.8f %.8f | %.8f -> %.8f\n", t_min, t_max, hit->t, t);
                         hit->t = t;
                         hit->triangleIndex = triangleIndex;
                         hit->ng = ng;
-
-                        if (t_min <= t && t <= t_max)
-                        {
-                            earlyTerminate = true;
-                        }
                     }
 
                     //pr::PrimBegin(pr::PrimitiveMode::Lines, 2);
@@ -549,7 +540,7 @@ namespace rtkd
                     //}
                     //pr::PrimEnd();
                 }
-                if (earlyTerminate)
+                if (hit->triangleIndex != 0xFFFFFFFF)
                 {
                     return;
                 }
@@ -619,7 +610,7 @@ int main() {
     Config config;
     config.ScreenWidth = 1920;
     config.ScreenHeight = 1080;
-    config.SwapInterval = 1;
+    config.SwapInterval = 0;
     Initialize(config);
 
     Camera3D camera;
