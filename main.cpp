@@ -80,6 +80,7 @@ namespace rtkd
     struct Triangle
     {
         Vec3 vs[3];
+        Vec3 ng;
     };
 
     struct AABB
@@ -349,21 +350,20 @@ namespace rtkd
         };
     }
 
-    inline bool intersect_ray_triangle( float* tOut, float* uOut, float* vOut, Vec3* ngOut, float t_min, float t_max, Vec3 ro, Vec3 rd, Vec3 v0, Vec3 v1, Vec3 v2)
+    inline bool intersect_ray_triangle( float* tOut, float* uOut, float* vOut, Vec3* ngOut, float t_min, float t_max, Vec3 ro, Vec3 rd, Vec3 v0, Vec3 v1, Vec3 v2, Vec3 ng)
     {
-        Vec3 e0 = v1 - v0;
-        Vec3 e1 = v2 - v1;
-        Vec3 e2 = v0 - v2;
-
-        Vec3 n = cross(e0, e1);
-        float t = dot(v0 - ro, n) / dot(n, rd);
+        float t = dot(v0 - ro, ng) / dot(ng, rd);
         if(t_min <= t && t <= t_max)
         {
+            Vec3 e0 = v1 - v0;
+            Vec3 e1 = v2 - v1;
+            Vec3 e2 = v0 - v2;
+
             Vec3 p = ro + rd * t;
 
-            float n2TriArea0 = dot(n, cross(e0, p - v0));  // |n| * 2 * tri_area( p, v0, v1 )
-            float n2TriArea1 = dot(n, cross(e1, p - v1));  // |n| * 2 * tri_area( p, v1, v2 )
-            float n2TriArea2 = dot(n, cross(e2, p - v2));  // |n| * 2 * tri_area( p, v2, v0 )
+            float n2TriArea0 = dot(ng, cross(e0, p - v0));  // |n| * 2 * tri_area( p, v0, v1 )
+            float n2TriArea1 = dot(ng, cross(e1, p - v1));  // |n| * 2 * tri_area( p, v1, v2 )
+            float n2TriArea2 = dot(ng, cross(e2, p - v2));  // |n| * 2 * tri_area( p, v2, v0 )
 
             if (n2TriArea0 < 0.0f || n2TriArea1 < 0.0f || n2TriArea2 < 0.0f)
             {
@@ -380,7 +380,7 @@ namespace rtkd
             *tOut = t;
             *uOut = bV;
             *vOut = bW;
-            *ngOut = n;
+            *ngOut = ng;
             return true;
         }
 
@@ -417,7 +417,7 @@ namespace rtkd
                 float t;
                 float u, v;
                 Vec3 ng;
-                if (intersect_ray_triangle(&t, &u, &v, &ng, 0.0f, hit->t, ro, rd, tri.vs[0], tri.vs[1], tri.vs[2]))
+                if (intersect_ray_triangle(&t, &u, &v, &ng, 0.0f, hit->t, ro, rd, tri.vs[0], tri.vs[1], tri.vs[2], tri.ng))
                 {
                     // printf("%.8f %.8f | %.8f -> %.8f\n", t_min, t_max, hit->t, t);
                     hit->t = t;
@@ -523,7 +523,7 @@ namespace rtkd
                     float t;
                     float u, v;
                     Vec3 ng;
-                    if (intersect_ray_triangle(&t, &u, &v, &ng, t_min, ss_min(hit->t, t_max), ro, rd, tri.vs[0], tri.vs[1], tri.vs[2]))
+                    if (intersect_ray_triangle(&t, &u, &v, &ng, t_min, ss_min(hit->t, t_max), ro, rd, tri.vs[0], tri.vs[1], tri.vs[2], tri.ng))
                     {
                         hit->t = t;
                         hit->triangleIndex = triangleIndex;
@@ -684,6 +684,13 @@ int main() {
                     glm::vec3 p = positions[indices[indexBase + j]];
                     tri.vs[j] = { p.x, p.y, p.z };
                 }
+
+                rtkd::Vec3 e0 = tri.vs[1] - tri.vs[0];
+                rtkd::Vec3 e1 = tri.vs[2] - tri.vs[1];
+                rtkd::Vec3 e2 = tri.vs[0] - tri.vs[2];
+
+                tri.ng = cross(e0, e1);
+
                 triangles.push_back(tri);
                 indexBase += nVerts;
             }
