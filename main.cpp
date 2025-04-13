@@ -443,6 +443,7 @@ namespace rtkd
 
             return;
         }
+
         KDNode* node = (KDNode*)&kdBuffer[(uint64_t)nodeIndex * KD_ALIGNMENT];
 
         float t = (node->boundary - ro[node->axis]) * one_over_rd[node->axis];
@@ -469,6 +470,97 @@ namespace rtkd
         }
     }
 
+    inline void intersect_rs(KDHit* hit, uint32_t rootIndex, Vec3 ro, Vec3 rd, Vec3 one_over_rd, float t_scene_min, float t_scene_max, uint8_t* kdBuffer, uint32_t* triangleBuffer, Triangle* triangles)
+    {
+        uint32_t nodeIndex = rootIndex;
+        float t_min = t_scene_min;
+        float t_max = t_scene_max;
+        while ( t_min < t_scene_max )
+        {
+            while ((nodeIndex & KD_LEAF_FLAG) == 0)
+            {
+                KDNode* node = (KDNode*)&kdBuffer[(uint64_t)nodeIndex * KD_ALIGNMENT];
+
+                float t = (node->boundary - ro[node->axis]) * one_over_rd[node->axis];
+
+                uint32_t childL = node->childL;
+                uint32_t childR = node->childR;
+                if (one_over_rd[node->axis] < 0.0f)
+                {
+                    std::swap(childL, childR);
+                }
+
+                if (t_max <= t)
+                {
+                    nodeIndex = childL;
+                }
+                else if (t <= t_min)
+                {
+                    nodeIndex = childR;
+                }
+                else if(childL != 0xFFFFFFFF)
+                {
+                    nodeIndex = childL;
+                    t_max = t;
+                }
+                else
+                {
+                    nodeIndex = childR;
+                    t_min = t;
+                }
+            }
+
+            //printf("%.8f %.8f\n", t_min, t_max);
+
+            if (nodeIndex != 0xFFFFFFFF)
+            {
+                nodeIndex &= KD_INDEX_MASK;
+                KDLeaf* leaf = (KDLeaf*)&kdBuffer[(uint64_t)nodeIndex * KD_ALIGNMENT];
+
+                bool earlyTerminate = false;
+                for (int i = leaf->triangleBeg; i != leaf->triangleEnd; i++)
+                {
+                    uint32_t triangleIndex = triangleBuffer[i];
+                    Triangle tri = triangles[triangleIndex];
+
+                    float t;
+                    float u, v;
+                    Vec3 ng;
+                    if (intersect_ray_triangle(&t, &u, &v, &ng, 0.0f, hit->t, ro, rd, tri.vs[0], tri.vs[1], tri.vs[2]))
+                    {
+                        // printf("%.8f %.8f | %.8f -> %.8f\n", t_min, t_max, hit->t, t);
+                        hit->t = t;
+                        hit->triangleIndex = triangleIndex;
+                        hit->ng = ng;
+
+                        if (t_min <= t && t <= t_max)
+                        {
+                            earlyTerminate = true;
+                        }
+                    }
+
+                    //pr::PrimBegin(pr::PrimitiveMode::Lines, 2);
+                    //for (int j = 0; j < 3; ++j)
+                    //{
+                    //    rtkd::Vec3 v0 = tri.vs[j];
+                    //    rtkd::Vec3 v1 = tri.vs[(j + 1) % 3];
+                    //    pr::PrimVertex({ v0.xs[0], v0.xs[1], v0.xs[2] }, { 255, 0, 255 });
+                    //    pr::PrimVertex({ v1.xs[0], v1.xs[1], v1.xs[2] }, { 255, 0, 255 });
+                    //}
+                    //pr::PrimEnd();
+                }
+                if (earlyTerminate)
+                {
+                    return;
+                }
+            }
+
+            t_min = t_max;
+            t_max = t_scene_max;
+            nodeIndex = rootIndex;
+        }
+    }
+
     inline void intersect(KDHit *hit, Vec3 ro, Vec3 rd, AABB bounds, uint8_t* kdBuffer, uint32_t* triangleBuffer, Triangle* triangles)
     {
         Vec3 one_over_rd;
@@ -483,7 +575,8 @@ namespace rtkd
             return;
         }
 
-        intersect(hit, 0, ro, rd, one_over_rd, range[0], range[1], kdBuffer, triangleBuffer, triangles );
+        intersect_rs(hit, 0, ro, rd, one_over_rd, range[0], range[1], kdBuffer, triangleBuffer, triangles);
+        //intersect(hit, 0, ro, rd, one_over_rd, range[0], range[1], kdBuffer, triangleBuffer, triangles );
 
         if( hit->t != FLT_MAX )
         {
@@ -561,8 +654,11 @@ int main() {
         DrawXYZAxis(1.0f);
 
         //static glm::vec3 ro = { 1, 1, 1 };
-        static glm::vec3 ro = { 0.428085, 0.890613, 0.028283 };
-        static glm::vec3 to = { -1, -1, -1 };
+        // static glm::vec3 ro = { 0.428085, 0.890613, 0.028283 };
+        // static glm::vec3 to = { -1, -1, -1 };
+
+        static glm::vec3 ro = { 0.877477, 0.946881, 0.041480 };
+        static glm::vec3 to = { 0.370726, -1.000000, -0.195561 };
 
         glm::vec3 rd = to - ro;
         
